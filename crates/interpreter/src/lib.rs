@@ -1,6 +1,5 @@
 use num::Num;
-
-use crate::backend::*;
+use stargazer_core::*;
 
 /// A backend which immediately evaluates to Rust values at runtime.
 pub struct Interpreter;
@@ -26,31 +25,17 @@ impl FixedPoint for Interpreter {
 
 impl Scope<Interpreter> for bool {}
 
-impl Function for Interpreter {
-    type Function<'a, I: 'a, O: 'a> = &'a dyn Fn(I) -> O;
-}
-
-impl BuildFunction for Interpreter {
-    fn build_function<'a, I, O>(
+impl Execute for Interpreter {
+    fn execute<I, O>(
         &self,
-        body: &'a dyn Fn(<Self as RustValue<I>>::Value) -> <Self as RustValue<O>>::Value,
-    ) -> Self::Function<'a, I, O>
+        func: &dyn Fn(&Self, <Self as RustValue<I>>::Value) -> <Self as RustValue<O>>::Value,
+        input: I,
+    ) -> O
     where
-        I: Scope<Self>,
-        O: Scope<Self>,
         Self: RustValue<I> + RustValue<O>,
     {
-        unsafe { core::mem::transmute(body) }
-    }
-}
-
-impl RunFunction for Interpreter {
-    fn run_function<I: Scope<Self>, O: Scope<Self>>(
-        &self,
-        func: &Self::Function<'_, I, O>,
-        input: I,
-    ) -> O {
-        func(input)
+        let converted: &dyn Fn(&Self, I) -> O = unsafe { core::mem::transmute(func) };
+        converted(self, input)
     }
 }
 
@@ -78,11 +63,11 @@ impl_primitive!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64);
 mod tests {
     use super::*;
 
-    use crate::tests::*;
+    use stargazer_tests::*;
 
     #[test]
-    fn interpreter_core_tests() {
+    fn interpreter_basic_tests() {
         let backend = Interpreter;
-        core_tests(&backend);
+        basic_tests(&backend);
     }
 }

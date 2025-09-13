@@ -4,3 +4,8 @@ resolver = "3"
 
 [workspace.dependencies]
 num = { version = "0.4", default-features = false }
+
+# internal Stargazer deps
+stargazer-core.path = "crates/core"
+stargazer-interpreter.path = "crates/interpreter"
+stargazer-tests.path = "crates/tests"

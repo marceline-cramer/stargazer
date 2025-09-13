@@ -1,10 +1,22 @@
 use core::fmt::Debug;
 
-use crate::backend::*;
+use num::{Bounded, traits::NumOps};
+use stargazer_core::*;
 
-pub fn core_tests<B: BuildFunction + Conditional + RunFunction + HasIntegers + FixedPoint>(
-    backend: &B,
-) {
+pub fn unsigned_arith_tests<T: From<u8> + NumOps + Bounded>(backend: &(impl Execute + RustNum<T>)) {
+}
+
+pub fn signed_arith_tests<T: From<u8> + NumOps + Bounded>(backend: &(impl Execute + RustNum<T>)) {}
+
+fn add<T: NumOps, B: RustNum<T>>(
+    _backend: &B,
+    lhs: <B as RustValue<T>>::Value,
+    rhs: <B as RustValue<T>>::Value,
+) -> <B as RustValue<T>>::Value {
+    lhs + rhs
+}
+
+pub fn basic_tests<B: Execute + Basic>(backend: &B) {
     test_assert_eq::<B, u64, u64>(
         backend,
         fib,
@@ -28,15 +40,13 @@ pub fn test_assert_eq<B, I, O>(
     function: impl Fn(&B, <B as RustValue<I>>::Value) -> <B as RustValue<O>>::Value,
     tests: &[(I, O)],
 ) where
-    B: BuildFunction + RunFunction + RustValue<I> + RustValue<O>,
+    B: Execute + RustValue<I> + RustValue<O>,
     I: Clone + Debug + Scope<B>,
     O: Debug + Scope<B>,
     for<'a> &'a O: Eq,
 {
-    let wrapped = |input| function(backend, input);
-    let built = backend.build_function(&wrapped);
     for (input, expected) in tests.iter() {
-        let got = backend.run_function(&built, input.clone());
+        let got = backend.execute(&function, input.clone());
         assert_eq!(expected, &got, "input {input:?}");
     }
 }

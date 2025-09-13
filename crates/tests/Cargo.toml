@@ -1,0 +1,8 @@
+[package]
+name = "stargazer-tests"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+stargazer-core.workspace = true
+num.workspace = true

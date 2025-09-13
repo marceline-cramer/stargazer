@@ -75,3 +75,28 @@ version = "0.1.0"
 dependencies = [
  "num",
 ]
+
+[[package]]
+name = "stargazer-interpreter"
+version = "0.1.0"
+dependencies = [
+ "num",
+ "stargazer-core",
+ "stargazer-tests",
+]
+
+[[package]]
+name = "stargazer-tests"
+version = "0.1.0"
+dependencies = [
+ "num",
+ "stargazer-core",
+]
+
+[[package]]
+name = "stargazer-wasm"
+version = "0.1.0"
+dependencies = [
+ "stargazer-core",
+ "stargazer-tests",
+]
