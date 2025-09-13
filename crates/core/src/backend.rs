@@ -1,3 +1,5 @@
+use core::ops::{Add, Not};
+
 use num::traits::{NumAssignOps, NumOps};
 
 /// The supertrait of all backend functionality.
@@ -37,18 +39,18 @@ pub trait RustNum<T: NumOps>:
 }
 
 /// Blanket implementation for RustNum.
-impl<
+impl<T, B> RustNum<T> for B
+where
     T: NumOps,
     B: RustCmp<T> + RustValue<T, Value: NumOps + NumAssignOps + NumOps<T> + NumAssignOps<T>>,
-> RustNum<T> for B
 {
 }
 
 /// Annotates that the Boolean type is fully supported by a backend.
-pub trait HasBool: RustConst<bool> {}
+pub trait HasBool: RustConst<bool, Value: Not<Output = Bool<Self>>> {}
 
 /// Blanket implementation for HasBool.
-impl<B: RustConst<bool>> HasBool for B {}
+impl<B: RustConst<bool, Value: Not<Output = Bool<Self>>>> HasBool for B {}
 
 /// Type alias for a backend's Boolean value.
 pub type Bool<T> = <T as RustValue<bool>>::Value;
@@ -215,3 +217,82 @@ define_alias!(
 );
 
 define_alias!(HasFloats, HasF32, HasF64);
+
+/// Utility enum for RustValue values who may be const or variable backend values.
+#[derive(Copy, Clone)]
+pub enum MaybeConst<C, V> {
+    Const(C),
+    Variable(V),
+}
+
+impl<T, V> From<T> for MaybeConst<T, V> {
+    fn from(value: T) -> Self {
+        Self::Const(value)
+    }
+}
+
+impl<B, C, V: Scope<B>> Scope<B> for MaybeConst<C, V> {}
+
+impl<B, C, V> Compare<Self, B> for MaybeConst<C, V>
+where
+    B: HasBool,
+    C: Ord,
+    V: Compare<V, B> + Compare<C, B>,
+{
+    fn eq(&self, rhs: &Self) -> Bool<B> {
+        use MaybeConst::*;
+        match (self, rhs) {
+            (Const(lhs), Const(rhs)) => Bool::<B>::from(lhs == rhs),
+            (Const(c), Variable(v)) | (Variable(v), Const(c)) => v.eq(c),
+            (Variable(lhs), Variable(rhs)) => lhs.eq(rhs),
+        }
+    }
+
+    fn le(&self, rhs: &Self) -> Bool<B> {
+        use MaybeConst::*;
+        match (self, rhs) {
+            (Const(lhs), Const(rhs)) => Bool::<B>::from(lhs <= rhs),
+            (Const(c), Variable(v)) => v.lt(c).not(),
+            (Variable(v), Const(c)) => v.le(c),
+            (Variable(lhs), Variable(rhs)) => lhs.le(rhs),
+        }
+    }
+
+    fn lt(&self, rhs: &Self) -> Bool<B> {
+        use MaybeConst::*;
+        match (self, rhs) {
+            (Const(lhs), Const(rhs)) => Bool::<B>::from(lhs < rhs),
+            (Const(c), Variable(v)) => v.le(c).not(),
+            (Variable(v), Const(c)) => v.lt(c),
+            (Variable(lhs), Variable(rhs)) => lhs.lt(rhs),
+        }
+    }
+}
+
+impl<C, V> Not for MaybeConst<C, V>
+where
+    C: Not<Output = C>,
+    V: Not<Output = V>,
+{
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        use MaybeConst::*;
+        match self {
+            Const(c) => Const(c.not()),
+            Variable(v) => Variable(v.not()),
+        }
+    }
+}
+
+impl<C, V> Add for MaybeConst<C, V>
+where
+    C: Add<Output = C> + Add<V, Output = C>,
+    V: Add<Output = V> + Add<C, Output = V>,
+{
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        todo!()
+    }
+}
