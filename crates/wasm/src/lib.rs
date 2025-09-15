@@ -15,10 +15,6 @@ impl<'b, T: AsWasm<'b>> RustValue<T> for WasmBackend {
     type Value<'a> = MaybeConst<T, WasmInteger<'a, T>>;
 }
 
-impl RustValue<bool> for WasmBackend {
-    type Value<'a> = MaybeConst<bool, WasmInteger<'a, i32>>;
-}
-
 pub enum WasmPrimitiveKind {
     I32,
     I64,
@@ -41,7 +37,9 @@ pub struct Context<'a> {
 
 impl<'a, 'b, T: AsWasm<'b>> Copy for WasmInteger<'a, T> {}
 
-impl<'a, 'b, T: AsWasm<'b>> Scope<WasmBackend> for WasmInteger<'a, T> {}
+impl<'a, 'b, T: AsWasm<'b>> Scope<T> for WasmBackend {
+    fn visit<C>(&self, ctx: &mut C, value: &T) {}
+}
 
 impl<'a, 'b, T: AsWasm<'b>> Clone for WasmInteger<'a, T> {
     fn clone(&self) -> Self {
@@ -53,7 +51,7 @@ impl<'a, 'b, T: AsWasm<'b>> Clone for WasmInteger<'a, T> {
     }
 }
 
-impl<'a> Not for WasmInteger<'a, i32> {
+impl<'a> Not for WasmInteger<'a, bool> {
     type Output = Self;
 
     fn not(self) -> Self::Output {
@@ -65,6 +63,14 @@ trait AsWasm<'a>: Copy {
     const KIND: WasmPrimitiveKind;
 
     fn push(&self);
+}
+
+impl AsWasm<'static> for bool {
+    const KIND: WasmPrimitiveKind = WasmPrimitiveKind::I32;
+
+    fn push(&self) {
+        todo!()
+    }
 }
 
 impl<'a, 'b, T: AsWasm<'b>> AsWasm<'b> for WasmInteger<'a, T> {
@@ -162,20 +168,22 @@ impl<'a, 'b, T: AsWasm<'b>> Rem<T> for WasmInteger<'a, T> {
     }
 }
 
-impl<'a, T: AsWasm<'a>> Scope<WasmBackend> for T {}
-
 impl Conditional for WasmBackend {
-    fn conditional<T: Scope<Self>>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T {
-        if_true.push();
+    fn conditional<T>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T
+    where
+        Self: Scope<T>,
+    {
+        let mut bleh = 0;
+        self.visit(&mut bleh, &if_true);
+        todo!()
     }
 }
 
 impl FixedPoint for WasmBackend {
-    fn fixed_point<'a, T: Scope<Self>>(
-        &self,
-        start: T,
-        body: impl Fn(T) -> (Bool<'a, Self>, T),
-    ) -> T {
+    fn fixed_point<'a, T>(&self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
+    where
+        Self: Scope<T>,
+    {
         todo!()
     }
 }

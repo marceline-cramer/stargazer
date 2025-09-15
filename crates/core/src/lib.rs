@@ -9,11 +9,15 @@ use num::traits::{NumAssignOps, NumOps};
 /// The supertrait of all backend functionality.
 pub trait Backend {}
 
+pub trait Scope<T>: Backend {
+    fn visit<C>(&self, ctx: &mut C, value: &T);
+}
+
 /// A backend trait associating a Rust type with some backend type.
 ///
 /// Used for primitive numeric types (i\*, u\*, f\*).
-pub trait RustValue<T>: Backend {
-    type Value<'a>: Copy + Scope<Self>;
+pub trait RustValue<T>: Backend + for<'a> Scope<Self::Value<'a>> {
+    type Value<'a>: Copy;
 }
 
 /// The backend supports initializing values from Rust constants.
@@ -93,23 +97,20 @@ impl<'a, T: Ord, B: HasBool> Compare<'a, T, B> for T {
     }
 }
 
-/// Declares that a value supports use in a backend's scope.
-pub trait Scope<B: ?Sized> {}
-
 /// Conditional branch (if-then-else).
 pub trait Conditional: RustValue<bool> {
     /// Picks a value to return based on a Boolean value.
-    fn conditional<T: Scope<Self>>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T;
+    fn conditional<T>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T
+    where
+        Self: Scope<T>;
 }
 
 /// Fixed-point loop (do-while).
 pub trait FixedPoint: HasBool {
     /// Iterates on a starting state until a condition is met and returns the final state.
-    fn fixed_point<'a, T: Scope<Self>>(
-        &self,
-        start: T,
-        body: impl Fn(T) -> (Bool<'a, Self>, T),
-    ) -> T;
+    fn fixed_point<'a, T>(&self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
+    where
+        Self: Scope<T>;
 }
 
 pub type ExecuteBody<'a, B, I, O> =
@@ -128,15 +129,18 @@ macro_rules! tuple_blanket_impls {
     ($($el:ident),+) => {
         impl<T, $($el),*> RustValue<($($el,)*)> for T
         where
-            $(T: RustValue<$el>),*
+            $(T: RustValue<$el>,)*
         {
             type Value<'a> = ($(<T as RustValue<$el>>::Value<'a>),*);
         }
 
-        impl<T, $($el),*> Scope<T> for ($($el,)*)
+        impl<T, $($el),*> Scope<($($el,)*)> for T
         where
-            $($el: Scope<T>),*
+            $(T: Scope<$el>,)*
         {
+            fn visit<Ctx>(&self, ctx: &mut Ctx, val: &($($el,)*)) {
+                todo!()
+            }
         }
     };
 }
@@ -155,9 +159,6 @@ macro_rules! impl_number {
     ($name:ident, $ty:ty) => {
         #[doc = concat!("Type alias for a backend's [", stringify!($ty), "] value.")]
         pub type $name<'a, T> = <T as RustValue<$ty>>::Value<'a>;
-
-        /// All primitives must supporting scoping.
-        impl<B: Backend> Scope<B> for $ty {}
     };
 }
 
@@ -249,13 +250,21 @@ pub enum MaybeConst<C, V> {
     Variable(V),
 }
 
+impl<B: Scope<V>, C, V> Scope<MaybeConst<C, V>> for B {
+    fn visit<Ctx>(&self, ctx: &mut Ctx, value: &MaybeConst<C, V>) {
+        use MaybeConst::*;
+        match value {
+            Const(_) => {}
+            Variable(v) => self.visit(ctx, v),
+        }
+    }
+}
+
 impl<T, V> From<T> for MaybeConst<T, V> {
     fn from(value: T) -> Self {
         Self::Const(value)
     }
 }
-
-impl<B, C, V: Scope<B>> Scope<B> for MaybeConst<C, V> {}
 
 impl<'a, B, C, V> Compare<'a, C, B> for MaybeConst<C, V>
 where

@@ -23,8 +23,6 @@ impl FixedPoint for Interpreter {
     }
 }
 
-impl Scope<Interpreter> for bool {}
-
 impl Execute for Interpreter {
     fn execute<I, O>(&self, func: &ExecuteBody<'_, Self, I, O>, input: I) -> O
     where
@@ -35,6 +33,14 @@ impl Execute for Interpreter {
     }
 }
 
+impl Scope<bool> for Interpreter {
+    fn visit<C>(&self, _: &mut C, _: &bool) {}
+}
+
+impl<T: Primitive> Scope<T> for Interpreter {
+    fn visit<C>(&self, _: &mut C, _: &T) {}
+}
+
 impl RustValue<bool> for Interpreter {
     type Value<'a> = bool;
 }
@@ -43,7 +49,7 @@ impl<T: Primitive> RustValue<T> for Interpreter {
     type Value<'a> = T;
 }
 
-trait Primitive: Copy + Num + Scope<Interpreter> {}
+trait Primitive: Copy + Num {}
 
 macro_rules! impl_primitive {
     ($el:ident) => {};
