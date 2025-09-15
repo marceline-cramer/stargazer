@@ -8,11 +8,11 @@ pub fn unsigned_arith_tests<T: From<u8> + NumOps + Bounded>(backend: &(impl Exec
 
 pub fn signed_arith_tests<T: From<u8> + NumOps + Bounded>(backend: &(impl Execute + RustNum<T>)) {}
 
-fn add<T: NumOps, B: RustNum<T>>(
+fn add<'a, T: NumOps, B: RustNum<T>>(
     _backend: &B,
-    lhs: <B as RustValue<T>>::Value,
-    rhs: <B as RustValue<T>>::Value,
-) -> <B as RustValue<T>>::Value {
+    lhs: <B as RustValue<T>>::Value<'a>,
+    rhs: <B as RustValue<T>>::Value<'a>,
+) -> <B as RustValue<T>>::Value<'a> {
     lhs + rhs
 }
 
@@ -35,23 +35,24 @@ pub fn basic_tests<B: Execute + Basic>(backend: &B) {
     );
 }
 
-pub fn test_assert_eq<B, I, O>(
-    backend: &B,
-    function: impl Fn(&B, <B as RustValue<I>>::Value) -> <B as RustValue<O>>::Value,
+pub fn test_assert_eq<'a, B, I, O>(
+    backend: &'a B,
+    function: impl Fn(&B, <B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a> + 'a,
     tests: &[(I, O)],
 ) where
     B: Execute + RustValue<I> + RustValue<O>,
-    I: Clone + Debug + Scope<B>,
-    O: Debug + Scope<B>,
-    for<'a> &'a O: Eq,
+    I: Clone + Debug + 'static,
+    O: Debug + 'static,
+    for<'b> &'b O: Eq,
 {
+    let wrapped = move |input| function(backend, input);
     for (input, expected) in tests.iter() {
-        let got = backend.execute(&function, input.clone());
+        let got = backend.execute(&wrapped, input.clone());
         assert_eq!(expected, &got, "input {input:?}");
     }
 }
 
-fn fib<B: FixedPoint + Conditional + HasU64>(backend: &B, num: U64<B>) -> U64<B> {
+fn fib<'a, B: FixedPoint + Conditional + RustNum<u64>>(backend: &B, num: U64<'a, B>) -> U64<'a, B> {
     let start = (U64::<B>::from(0), U64::<B>::from(0), U64::<B>::from(1));
 
     let (_, last, _) = backend.fixed_point(start, |(mut idx, a, b)| {

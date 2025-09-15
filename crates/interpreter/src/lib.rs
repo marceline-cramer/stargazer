@@ -13,7 +13,7 @@ impl Conditional for Interpreter {
 }
 
 impl FixedPoint for Interpreter {
-    fn fixed_point<T>(&self, mut start: T, body: impl Fn(T) -> (Bool<Self>, T)) -> T {
+    fn fixed_point<'a, T>(&self, mut start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T {
         loop {
             match body(start) {
                 (true, result) => return result,
@@ -26,25 +26,21 @@ impl FixedPoint for Interpreter {
 impl Scope<Interpreter> for bool {}
 
 impl Execute for Interpreter {
-    fn execute<I, O>(
-        &self,
-        func: &dyn Fn(&Self, <Self as RustValue<I>>::Value) -> <Self as RustValue<O>>::Value,
-        input: I,
-    ) -> O
+    fn execute<I, O>(&self, func: &ExecuteBody<'_, Self, I, O>, input: I) -> O
     where
         Self: RustValue<I> + RustValue<O>,
     {
-        let converted: &dyn Fn(&Self, I) -> O = unsafe { core::mem::transmute(func) };
-        converted(self, input)
+        let converted: &dyn Fn(I) -> O = unsafe { core::mem::transmute(func) };
+        converted(input)
     }
 }
 
 impl RustValue<bool> for Interpreter {
-    type Value = bool;
+    type Value<'a> = bool;
 }
 
 impl<T: Primitive> RustValue<T> for Interpreter {
-    type Value = T;
+    type Value<'a> = T;
 }
 
 trait Primitive: Copy + Num + Scope<Interpreter> {}

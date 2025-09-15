@@ -1,6 +1,7 @@
 use std::{
+    cell::RefCell,
     marker::PhantomData,
-    ops::{Add, Not},
+    ops::{Add, Div, Mul, Not, Rem, Sub},
 };
 
 use stargazer_core::*;
@@ -10,33 +11,49 @@ pub struct WasmBackend {}
 
 impl Backend for WasmBackend {}
 
-impl<T: Primitive> RustValue<T> for WasmBackend {
-    type Value = MaybeConst<T, WasmInteger<T>>;
+impl<'b, T: AsWasm<'b>> RustValue<T> for WasmBackend {
+    type Value<'a> = MaybeConst<T, WasmInteger<'a, T>>;
 }
 
 impl RustValue<bool> for WasmBackend {
-    type Value = MaybeConst<bool, WasmInteger<i32>>;
+    type Value<'a> = MaybeConst<bool, WasmInteger<'a, i32>>;
 }
 
-pub struct WasmInteger<T> {
+pub enum WasmPrimitiveKind {
+    I32,
+    I64,
+    F32,
+    F64,
+}
+
+pub struct WasmInteger<'a, T> {
     id: usize,
+    ctx: &'a Context<'a>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: Primitive> Copy for WasmInteger<T> {}
+struct ContextInner {}
 
-impl<T: Primitive> Scope<WasmBackend> for WasmInteger<T> {}
+pub struct Context<'a> {
+    backend: &'a WasmBackend,
+    inner: RefCell<ContextInner>,
+}
 
-impl<T: Primitive> Clone for WasmInteger<T> {
+impl<'a, 'b, T: AsWasm<'b>> Copy for WasmInteger<'a, T> {}
+
+impl<'a, 'b, T: AsWasm<'b>> Scope<WasmBackend> for WasmInteger<'a, T> {}
+
+impl<'a, 'b, T: AsWasm<'b>> Clone for WasmInteger<'a, T> {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
+            ctx: self.ctx,
             _phantom: PhantomData,
         }
     }
 }
 
-impl Not for WasmInteger<i32> {
+impl<'a> Not for WasmInteger<'a, i32> {
     type Output = Self;
 
     fn not(self) -> Self::Output {
@@ -44,37 +61,68 @@ impl Not for WasmInteger<i32> {
     }
 }
 
-macro_rules! impl_marker {
-    ($marker:ident,) => {};
-    ($marker:ident, $head:ty $(, $tail:ty)*) => {
-        impl $marker for $head {}
-        impl_marker!($marker, $($tail),*);
+trait AsWasm<'a>: Copy {
+    const KIND: WasmPrimitiveKind;
+
+    fn push(&self);
+}
+
+impl<'a, 'b, T: AsWasm<'b>> AsWasm<'b> for WasmInteger<'a, T> {
+    const KIND: WasmPrimitiveKind = T::KIND;
+
+    fn push(&self) {
+        todo!()
+    }
+}
+
+macro_rules! impl_as_wasm {
+    ($kind:expr,) => {};
+    ($kind:expr, $head:ty $(, $tail:ty)*) => {
+        impl AsWasm<'static> for $head {
+            const KIND: WasmPrimitiveKind = $kind;
+
+            fn push(&self) {
+                todo!()
+            }
+        }
+        impl_as_wasm!($kind, $($tail),*);
     };
 }
 
-trait Primitive: Copy {}
+impl_as_wasm!(WasmPrimitiveKind::I32, u8, u16, u32, i8, i16, i32);
+impl_as_wasm!(WasmPrimitiveKind::I64, u64, i64);
+impl_as_wasm!(WasmPrimitiveKind::F32, f32);
+impl_as_wasm!(WasmPrimitiveKind::F64, f64);
 
-impl_marker!(
-    Primitive, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64
-);
+impl<'a, T: AsWasm<'a>> Compare<'a, T, WasmBackend> for WasmInteger<'a, T> {
+    fn eq(&self, rhs: &T) -> Bool<'a, WasmBackend> {
+        todo!()
+    }
 
-trait RepI32: Primitive {}
+    fn le(&self, rhs: &T) -> Bool<'a, WasmBackend> {
+        todo!()
+    }
 
-impl_marker!(RepI32, u8, u16, u32, i8, i16, i32);
+    fn lt(&self, rhs: &T) -> Bool<'a, WasmBackend> {
+        todo!()
+    }
+}
 
-trait RepI64: Primitive {}
+impl<'a, T: AsWasm<'a>> Compare<'a, Self, WasmBackend> for WasmInteger<'a, T> {
+    fn eq(&self, rhs: &Self) -> Bool<'a, WasmBackend> {
+        todo!()
+    }
 
-impl_marker!(RepI64, u64, i64);
+    fn le(&self, rhs: &Self) -> Bool<'a, WasmBackend> {
+        todo!()
+    }
 
-trait RepF32: Primitive {}
+    fn lt(&self, rhs: &Self) -> Bool<'a, WasmBackend> {
+        todo!()
+    }
+}
 
-impl_marker!(RepF32, f32);
-
-trait RepF64: Primitive {}
-
-impl_marker!(RepF64, f64);
-
-impl<T: RepI32> Add<T> for WasmInteger<T> {
+impl<'a, 'b, T: AsWasm<'b>> Add<T> for WasmInteger<'a, T> {
     type Output = Self;
 
     fn add(self, rhs: T) -> Self::Output {
@@ -82,35 +130,74 @@ impl<T: RepI32> Add<T> for WasmInteger<T> {
     }
 }
 
-impl<T: RepI32> Add for WasmInteger<T> {
+impl<'a, 'b, T: AsWasm<'b>> Mul<T> for WasmInteger<'a, T> {
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self::Output {
+    fn mul(self, rhs: T) -> Self::Output {
         todo!()
     }
 }
 
+impl<'a, 'b, T: AsWasm<'b>> Sub<T> for WasmInteger<'a, T> {
+    type Output = Self;
+
+    fn sub(self, rhs: T) -> Self::Output {
+        todo!()
+    }
+}
+
+impl<'a, 'b, T: AsWasm<'b>> Div<T> for WasmInteger<'a, T> {
+    type Output = Self;
+
+    fn div(self, rhs: T) -> Self::Output {
+        todo!()
+    }
+}
+
+impl<'a, 'b, T: AsWasm<'b>> Rem<T> for WasmInteger<'a, T> {
+    type Output = Self;
+
+    fn rem(self, rhs: T) -> Self::Output {
+        todo!()
+    }
+}
+
+impl<'a, T: AsWasm<'a>> Scope<WasmBackend> for T {}
+
 impl Conditional for WasmBackend {
     fn conditional<T: Scope<Self>>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T {
-        todo!()
+        if_true.push();
     }
 }
 
 impl FixedPoint for WasmBackend {
-    fn fixed_point<T: Scope<Self>>(&self, start: T, body: impl Fn(T) -> (Bool<Self>, T)) -> T {
+    fn fixed_point<'a, T: Scope<Self>>(
+        &self,
+        start: T,
+        body: impl Fn(T) -> (Bool<'a, Self>, T),
+    ) -> T {
         todo!()
     }
 }
 
 impl Execute for WasmBackend {
-    fn execute<I, O>(
-        &self,
-        func: &dyn Fn(&Self, <Self as RustValue<I>>::Value) -> <Self as RustValue<O>>::Value,
-        input: I,
-    ) -> O
+    fn execute<I, O>(&self, func: &ExecuteBody<'_, Self, I, O>, input: I) -> O
     where
         Self: RustValue<I> + RustValue<O>,
     {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use stargazer_tests::unsigned_arith_tests;
+
+    #[test]
+    fn wasm_unsigned_arith() {
+        let backend = WasmBackend::default();
+        unsigned_arith_tests::<u32>(&backend);
     }
 }
