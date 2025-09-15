@@ -138,8 +138,10 @@ macro_rules! tuple_blanket_impls {
         where
             $(T: Scope<$el>,)*
         {
+            #[allow(non_snake_case)]
             fn visit<Ctx>(&self, ctx: &mut Ctx, val: &($($el,)*)) {
-                todo!()
+                let ($($el,)*) = val;
+                $(self.visit(ctx, $el));*
             }
         }
     };
