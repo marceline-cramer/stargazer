@@ -11,7 +11,7 @@ pub struct WasmBackend {}
 
 impl Backend for WasmBackend {}
 
-impl<'b, T: AsWasm<'b>> RustValue<T> for WasmBackend {
+impl<T: AsWasm> RustValue<T> for WasmBackend {
     type Value<'a> = MaybeConst<T, WasmInteger<'a, T>>;
 }
 
@@ -35,13 +35,15 @@ pub struct Context<'a> {
     inner: RefCell<ContextInner>,
 }
 
-impl<'a, 'b, T: AsWasm<'b>> Copy for WasmInteger<'a, T> {}
+impl<'a, T> Copy for WasmInteger<'a, T> {}
 
-impl<'a, 'b, T: AsWasm<'b>> Scope<T> for WasmBackend {
-    fn visit<C>(&self, ctx: &mut C, value: &T) {}
+impl<T: AsWasm> Scope<T> for WasmBackend {
+    fn visit<C>(&self, ctx: &mut C, value: &T) {
+        todo!()
+    }
 }
 
-impl<'a, 'b, T: AsWasm<'b>> Clone for WasmInteger<'a, T> {
+impl<'a, T> Clone for WasmInteger<'a, T> {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
@@ -59,13 +61,15 @@ impl<'a> Not for WasmInteger<'a, bool> {
     }
 }
 
-trait AsWasm<'a>: Copy {
+pub trait AsWasm: Copy {
+    type Primitive;
     const KIND: WasmPrimitiveKind;
 
     fn push(&self);
 }
 
-impl AsWasm<'static> for bool {
+impl AsWasm for bool {
+    type Primitive = bool;
     const KIND: WasmPrimitiveKind = WasmPrimitiveKind::I32;
 
     fn push(&self) {
@@ -73,7 +77,8 @@ impl AsWasm<'static> for bool {
     }
 }
 
-impl<'a, 'b, T: AsWasm<'b>> AsWasm<'b> for WasmInteger<'a, T> {
+impl<'a, T: AsWasm> AsWasm for WasmInteger<'a, T> {
+    type Primitive = T;
     const KIND: WasmPrimitiveKind = T::KIND;
 
     fn push(&self) {
@@ -81,16 +86,34 @@ impl<'a, 'b, T: AsWasm<'b>> AsWasm<'b> for WasmInteger<'a, T> {
     }
 }
 
+macro_rules! impl_rhs_op {
+    ($prim:ty, $op:ident, $method:ident) => {
+        impl<'a> $op<WasmInteger<'a, $prim>> for $prim {
+            type Output = WasmInteger<'a, $prim>;
+
+            fn $method(self, other: WasmInteger<'a, $prim>) -> WasmInteger<'a, $prim> {
+                todo!()
+            }
+        }
+    };
+}
+
 macro_rules! impl_as_wasm {
     ($kind:expr,) => {};
     ($kind:expr, $head:ty $(, $tail:ty)*) => {
-        impl AsWasm<'static> for $head {
+        impl AsWasm for $head {
+            type Primitive = $head;
             const KIND: WasmPrimitiveKind = $kind;
 
             fn push(&self) {
                 todo!()
             }
         }
+
+        impl_rhs_op!($head, Sub, sub);
+        impl_rhs_op!($head, Div, div);
+        impl_rhs_op!($head, Rem, rem);
+
         impl_as_wasm!($kind, $($tail),*);
     };
 }
@@ -100,7 +123,7 @@ impl_as_wasm!(WasmPrimitiveKind::I64, u64, i64);
 impl_as_wasm!(WasmPrimitiveKind::F32, f32);
 impl_as_wasm!(WasmPrimitiveKind::F64, f64);
 
-impl<'a, T: AsWasm<'a>> Compare<'a, T, WasmBackend> for WasmInteger<'a, T> {
+impl<'a, T: AsWasm> Compare<'a, T, WasmBackend> for WasmInteger<'a, T> {
     fn eq(&self, rhs: &T) -> Bool<'a, WasmBackend> {
         todo!()
     }
@@ -114,7 +137,7 @@ impl<'a, T: AsWasm<'a>> Compare<'a, T, WasmBackend> for WasmInteger<'a, T> {
     }
 }
 
-impl<'a, T: AsWasm<'a>> Compare<'a, Self, WasmBackend> for WasmInteger<'a, T> {
+impl<'a, T: AsWasm> Compare<'a, Self, WasmBackend> for WasmInteger<'a, T> {
     fn eq(&self, rhs: &Self) -> Bool<'a, WasmBackend> {
         todo!()
     }
@@ -128,7 +151,7 @@ impl<'a, T: AsWasm<'a>> Compare<'a, Self, WasmBackend> for WasmInteger<'a, T> {
     }
 }
 
-impl<'a, 'b, T: AsWasm<'b>> Add<T> for WasmInteger<'a, T> {
+impl<'a, T: AsWasm> Add<T> for WasmInteger<'a, T::Primitive> {
     type Output = Self;
 
     fn add(self, rhs: T) -> Self::Output {
@@ -136,7 +159,7 @@ impl<'a, 'b, T: AsWasm<'b>> Add<T> for WasmInteger<'a, T> {
     }
 }
 
-impl<'a, 'b, T: AsWasm<'b>> Mul<T> for WasmInteger<'a, T> {
+impl<'a, T: AsWasm> Mul<T> for WasmInteger<'a, T::Primitive> {
     type Output = Self;
 
     fn mul(self, rhs: T) -> Self::Output {
@@ -144,7 +167,7 @@ impl<'a, 'b, T: AsWasm<'b>> Mul<T> for WasmInteger<'a, T> {
     }
 }
 
-impl<'a, 'b, T: AsWasm<'b>> Sub<T> for WasmInteger<'a, T> {
+impl<'a, T: AsWasm> Sub<T> for WasmInteger<'a, T::Primitive> {
     type Output = Self;
 
     fn sub(self, rhs: T) -> Self::Output {
@@ -152,7 +175,7 @@ impl<'a, 'b, T: AsWasm<'b>> Sub<T> for WasmInteger<'a, T> {
     }
 }
 
-impl<'a, 'b, T: AsWasm<'b>> Div<T> for WasmInteger<'a, T> {
+impl<'a, T: AsWasm> Div<T> for WasmInteger<'a, T::Primitive> {
     type Output = Self;
 
     fn div(self, rhs: T) -> Self::Output {
@@ -160,7 +183,7 @@ impl<'a, 'b, T: AsWasm<'b>> Div<T> for WasmInteger<'a, T> {
     }
 }
 
-impl<'a, 'b, T: AsWasm<'b>> Rem<T> for WasmInteger<'a, T> {
+impl<'a, T: AsWasm> Rem<T> for WasmInteger<'a, T::Primitive> {
     type Output = Self;
 
     fn rem(self, rhs: T) -> Self::Output {

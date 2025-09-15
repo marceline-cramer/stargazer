@@ -68,7 +68,7 @@ impl<T, B> RustNum<T> for B
 where
     B: RustCmp<T> + RustConst<T>,
     for<'a> <B as RustValue<T>>::Value<'a>: NumOps + NumAssignOps + NumOps<T> + NumAssignOps<T>,
-    T: NumOps + for<'a> NumOps<<B as RustValue<T>>::Value<'a>>,
+    T: NumOps,
 {
 }
 
