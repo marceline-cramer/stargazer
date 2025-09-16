@@ -11,7 +11,12 @@ pub struct WasmBackend {}
 
 impl Backend for WasmBackend {}
 
-impl<T: AsWasm> RustValue<T> for WasmBackend {
+pub enum WasmScope<'a> {
+    Func(&'a RefCell<FuncBuilder>),
+    Block(BlockBuilder<'a>),
+}
+
+impl<T: WasmValue> RustValue<T> for WasmBackend {
     type Value<'a> = MaybeConst<T, WasmInteger<'a, T>>;
 }
 
@@ -24,22 +29,54 @@ pub enum WasmPrimitiveKind {
 
 pub struct WasmInteger<'a, T> {
     id: usize,
-    ctx: &'a Context<'a>,
+    ctx: &'a BlockBuilder<'a>,
     _phantom: PhantomData<T>,
 }
 
-struct ContextInner {}
-
-pub struct Context<'a> {
+pub struct BlockBuilder<'a> {
     backend: &'a WasmBackend,
-    inner: RefCell<ContextInner>,
 }
 
 impl<'a, T> Copy for WasmInteger<'a, T> {}
 
-impl<T: AsWasm> Scope<T> for WasmBackend {
-    fn visit<C>(&self, ctx: &mut C, value: &T) {
-        todo!()
+pub struct FuncBuilder<'a> {
+    args: Vec<WasmPrimitiveKind>,
+    block: &'a BlockBuilder<'a>,
+}
+
+impl<'a, T: WasmValue> Enter<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBackend {
+    fn enter(&self, ctx: &mut FuncBuilder<'a>) -> WasmInteger<'a, T> {
+        let id = ctx.args.len();
+        ctx.args.push(T::KIND);
+
+        WasmInteger {
+            id,
+            ctx: ctx.block,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<'a, T: WasmValue> Enter<BlockBuilder<'a>, WasmInteger<'a, T>> for WasmBackend {
+    fn enter(&self, ctx: &mut BlockBuilder<'a>) -> WasmInteger<'a, T> {
+        let id = ctx.args.len();
+        ctx.args.push(T::KIND);
+
+        WasmInteger {
+            id,
+            ctx: ctx.block,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<'a, 'b, T: WasmValue> Scope<BlockBuilder<'a>, WasmInteger<'b, T>> for WasmBackend {
+    fn enter(&self, ctx: &mut BlockBuilder<'a>) -> WasmInteger<'b, T> {
+        todo!("populate enter() for BlockBuilder")
+    }
+
+    fn leave(&self, ctx: &mut BlockBuilder<'a>, value: WasmInteger<'b, T>) {
+        todo!("populate leave() for BlockBuilder")
     }
 }
 
@@ -62,26 +99,30 @@ impl<'a> Not for WasmInteger<'a, bool> {
 }
 
 pub trait AsWasm: Copy {
-    type Primitive;
+    type Primitive: WasmValue;
     const KIND: WasmPrimitiveKind;
 
-    fn push(&self);
+    fn pushOnTop(&self);
 }
+
+pub trait WasmValue: AsWasm {}
+
+impl WasmValue for bool {}
 
 impl AsWasm for bool {
     type Primitive = bool;
     const KIND: WasmPrimitiveKind = WasmPrimitiveKind::I32;
 
-    fn push(&self) {
+    fn pushOnTop(&self) {
         todo!()
     }
 }
 
-impl<'a, T: AsWasm> AsWasm for WasmInteger<'a, T> {
+impl<'a, T: WasmValue> AsWasm for WasmInteger<'a, T> {
     type Primitive = T;
     const KIND: WasmPrimitiveKind = T::KIND;
 
-    fn push(&self) {
+    fn pushOnTop(&self) {
         todo!()
     }
 }
@@ -91,7 +132,7 @@ macro_rules! impl_rhs_op {
         impl<'a> $op<WasmInteger<'a, $prim>> for $prim {
             type Output = WasmInteger<'a, $prim>;
 
-            fn $method(self, other: WasmInteger<'a, $prim>) -> WasmInteger<'a, $prim> {
+            fn $method(self, _other: WasmInteger<'a, $prim>) -> WasmInteger<'a, $prim> {
                 todo!()
             }
         }
@@ -101,6 +142,8 @@ macro_rules! impl_rhs_op {
 macro_rules! impl_as_wasm {
     ($kind:expr,) => {};
     ($kind:expr, $head:ty $(, $tail:ty)*) => {
+        impl WasmValue for $head {}
+
         impl AsWasm for $head {
             type Primitive = $head;
             const KIND: WasmPrimitiveKind = $kind;
@@ -133,20 +176,6 @@ impl<'a, T: AsWasm> Compare<'a, T, WasmBackend> for WasmInteger<'a, T> {
     }
 
     fn lt(&self, rhs: &T) -> Bool<'a, WasmBackend> {
-        todo!()
-    }
-}
-
-impl<'a, T: AsWasm> Compare<'a, Self, WasmBackend> for WasmInteger<'a, T> {
-    fn eq(&self, rhs: &Self) -> Bool<'a, WasmBackend> {
-        todo!()
-    }
-
-    fn le(&self, rhs: &Self) -> Bool<'a, WasmBackend> {
-        todo!()
-    }
-
-    fn lt(&self, rhs: &Self) -> Bool<'a, WasmBackend> {
         todo!()
     }
 }
@@ -192,31 +221,54 @@ impl<'a, T: AsWasm> Rem<T> for WasmInteger<'a, T::Primitive> {
 }
 
 impl Conditional for WasmBackend {
+    type ConditionalScope<'a> = BlockBuilder<'a>;
+
     fn conditional<T>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T
     where
-        Self: Scope<T>,
+        Self: for<'a> Scope<BlockBuilder<'a>, T>,
     {
-        let mut bleh = 0;
-        self.visit(&mut bleh, &if_true);
         todo!()
     }
 }
 
 impl FixedPoint for WasmBackend {
+    type FixedPointScope<'a> = BlockBuilder<'a>;
+
     fn fixed_point<'a, T>(&self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
     where
-        Self: Scope<T>,
+        Self: for<'b> Scope<BlockBuilder<'b>, T>,
     {
         todo!()
     }
 }
 
 impl Execute for WasmBackend {
-    fn execute<I, O>(&self, func: &ExecuteBody<'_, Self, I, O>, input: I) -> O
+    type ExecuteScope<'a> = FuncBuilder;
+
+    fn execute<'a, I: 'a, O: 'a>(&self, func: &ExecuteBody<'a, Self, I, O>) -> impl Fn(I) -> O + 'a
     where
-        Self: RustValue<I> + RustValue<O>,
+        Self: RustValueScope<FuncBuilder, I> + RustValueScope<FuncBuilder, O>,
     {
-        todo!()
+        let mut builder = FuncBuilder::default();
+        let entered = self.enter(&mut builder);
+        let executed = (*func)(entered);
+        self.leave(&mut builder, executed);
+
+        let wasm = &[];
+
+        use wasmi::*;
+        let engine = Engine::default();
+        let module = Module::new(&engine, wasm).unwrap();
+        let mut store = Store::new(&engine, 0u32);
+        let mut linker = Linker::new(&engine);
+        let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
+        let func = instance.get_func(&store, "main").unwrap();
+
+        move |inputs| {
+            let mut output_vals = vec![Val::default(ValType::F64)];
+            func.call(&mut store, input_vals, &mut output_vals).unwrap();
+            todo!()
+        }
     }
 }
 

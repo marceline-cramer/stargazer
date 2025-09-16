@@ -40,14 +40,15 @@ pub fn test_assert_eq<'a, B, I, O>(
     function: impl Fn(&B, <B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a> + 'a,
     tests: &[(I, O)],
 ) where
-    B: Execute + RustValue<I> + RustValue<O>,
+    B: RustValueControlFlow<I> + RustValueControlFlow<O>,
     I: Clone + Debug + 'static,
     O: Debug + 'static,
     for<'b> &'b O: Eq,
 {
     let wrapped = move |input| function(backend, input);
+    let func = backend.execute(&wrapped);
     for (input, expected) in tests.iter() {
-        let got = backend.execute(&wrapped, input.clone());
+        let got = func(input.clone());
         assert_eq!(expected, &got, "input {input:?}");
     }
 }

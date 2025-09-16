@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 stargazer-core.workspace = true
+wasmi = "0.51"
 
 [dev-dependencies]
 stargazer-tests.workspace = true

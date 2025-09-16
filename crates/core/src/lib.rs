@@ -4,114 +4,127 @@ use core::ops::{
     Add, AddAssign, Div, DivAssign, Mul, MulAssign, Not, Rem, RemAssign, Sub, SubAssign,
 };
 
-use num::traits::{NumAssignOps, NumOps};
+use num::{
+    Num,
+    traits::{NumAssignOps, NumOps},
+};
 
 /// The supertrait of all backend functionality.
 pub trait Backend {}
 
-pub trait Scope<T>: Backend {
-    fn visit<C>(&self, ctx: &mut C, value: &T);
+/// Implements a type entering a scope.
+pub trait Enter<S, T>: Backend {
+    /// With the scope as context, create a value.
+    fn enter(&self, scope: &mut S) -> T;
 }
 
-/// A backend trait associating a Rust type with some backend type.
-///
-/// Used for primitive numeric types (i\*, u\*, f\*).
-pub trait RustValue<T>: Backend + for<'a> Scope<Self::Value<'a>> {
+/// Implements a type leaving a scope.
+pub trait Leave<S, T>: Backend {
+    /// Exit the type from scope.
+    fn leave(&self, scope: &mut S, value: T);
+}
+
+/// Defines full scoping operations for a type.
+pub trait Scope<S, T>: Enter<S, T> + Leave<S, T> {}
+impl<B, S, T> Scope<S, T> for B where B: Enter<S, T> + Leave<S, T> {}
+
+/// Conditional branch (if-then-else).
+pub trait Conditional: RustValue<bool> {
+    /// The type to use for conditional scopes.
+    type ConditionalScope<'a>;
+
+    /// Picks a value to return based on a Boolean value.
+    fn conditional<T>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T
+    where
+        Self: for<'a> Scope<Self::ConditionalScope<'a>, T>;
+}
+
+/// Fixed-point loop (do-while).
+pub trait FixedPoint: RustValue<bool> {
+    /// The type to use for fixed-point scopes.
+    type FixedPointScope<'a>;
+
+    /// Iterates on a starting state until a condition is met and returns the final state.
+    fn fixed_point<'a, T: 'a>(&self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
+    where
+        Self: for<'b> Scope<Self::FixedPointScope<'b>, T>;
+}
+
+/// A backend trait associating a Rust type with some backend value type.
+pub trait RustValue<T>: Backend {
     type Value<'a>: Copy;
 }
 
 /// The backend supports initializing values from Rust constants.
 pub trait RustConst<T>: for<'a> RustValue<T, Value<'a>: From<T>> {}
-
-/// Blanket implementation for RustConst.
 impl<T, B: RustValue<T>> RustConst<T> for B where for<'a> B::Value<'a>: From<T> {}
 
 /// Annotates that the Boolean type is fully supported by a backend.
 pub trait HasBool: for<'a> RustConst<bool, Value<'a>: SelfNot> {}
-
-/// Necessary to break this out to avoid associated type bound on generic lifetime in [HasBool].
-pub trait SelfNot: Not<Output = Self> {}
-
-impl<T: Not<Output = T>> SelfNot for T {}
-
-/// Blanket implementation for HasBool.
 impl<B: RustConst<bool>> HasBool for B where for<'a> B::Value<'a>: SelfNot {}
 
-/// Supports comparing two Rust values and returning a Boolean.
-pub trait RustCmp<T>:
-    for<'a> RustValue<
-        T,
-        Value<'a>: Compare<'a, <Self as RustValue<T>>::Value<'a>, Self> + Compare<'a, T, Self>,
-    > + HasBool
+/// Blanket trait for types whose [Not] implementation is themselves.
+///
+/// This is its own trait because otherwise, [HasBool] would require an
+/// associated type bound on Self::Value that is not supported by Rust.
+pub trait SelfNot: Not<Output = Self> {}
+impl<T: Not<Output = T>> SelfNot for T {}
+
+/// Implements comparison between two types.
+pub trait Compare<L, R>: RustValue<bool> {
+    fn eq(&self, lhs: L, rhs: R) -> Bool<Self>;
+    fn le(&self, lhs: L, rhs: R) -> Bool<Self>;
+    fn lt(&self, lhs: L, rhs: R) -> Bool<Self>;
+}
+
+/// Blanket implementation for `Ord` types.
+impl<T: Ord, B: RustConst<bool>> Compare<T, T> for B {
+    fn eq(&self, lhs: T, rhs: T) -> Bool<B> {
+        Bool::<B>::from(lhs == rhs)
+    }
+
+    fn le(&self, lhs: T, rhs: T) -> Bool<B> {
+        Bool::<B>::from(lhs <= rhs)
+    }
+
+    fn lt(&self, lhs: T, rhs: T) -> Bool<B> {
+        Bool::<B>::from(lhs < rhs)
+    }
+}
+
+/// Support comparing a Rust type against its backend value.
+pub trait RustCompare<T>:
+    RustValue<T>
+    + for<'a> Compare<T, <Self as RustValue<T>>::Value<'a>>
+    + for<'a> Compare<<Self as RustValue<T>>::Value<'a>, T>
 {
 }
 
-/// Blanket implementation for comparables.
-impl<T, B> RustCmp<T> for B
-where
-    B: RustValue<T> + HasBool,
-    for<'a> <B as RustValue<T>>::Value<'a>:
-        Compare<'a, <B as RustValue<T>>::Value<'a>, B> + Compare<'a, T, B>,
+impl<B, T> RustCompare<T> for B where
+    B: RustValue<T>
+        + Compare<T, T>
+        + for<'a> Compare<T, <Self as RustValue<T>>::Value<'a>>
+        + for<'a> Compare<<Self as RustValue<T>>::Value<'a>, T>
 {
 }
 
 /// Annotates a backend's Rust value type as supporting basic numeric operations.
-pub trait RustNum<T: NumOps>:
-    RustCmp<T>
-    + RustConst<T>
-    + for<'a> RustValue<T, Value<'a>: NumOps + NumAssignOps + NumOps<T> + NumAssignOps<T>>
+pub trait RustNumOps<T: NumOps>:
+    for<'a> RustValue<T, Value<'a>: NumOps + NumAssignOps + NumOps<T> + NumAssignOps<T>>
 {
 }
 
-/// Blanket implementation for RustNum.
-impl<T, B> RustNum<T> for B
-where
-    B: RustCmp<T> + RustConst<T>,
-    for<'a> <B as RustValue<T>>::Value<'a>: NumOps + NumAssignOps + NumOps<T> + NumAssignOps<T>,
-    T: NumOps,
+impl<B, T: NumOps> RustNumOps<T> for B where
+    B: for<'a> RustValue<T, Value<'a>: NumOps + NumAssignOps + NumOps<T> + NumAssignOps<T>>
 {
 }
+
+/// This backend fully supports a number type.
+pub trait RustNum<T: Num>: RustCompare<T> + RustNumOps<T> + RustConst<T> {}
+impl<B, T: Num> RustNum<T> for B where B: RustCompare<T> + RustNumOps<T> + RustConst<T> {}
 
 /// Type alias for a backend's Boolean value.
 pub type Bool<'a, T> = <T as RustValue<bool>>::Value<'a>;
-
-/// Comparison operations for backend values.
-pub trait Compare<'a, Rhs, B: HasBool + ?Sized> {
-    fn eq(&self, rhs: &Rhs) -> Bool<'a, B>;
-    fn le(&self, rhs: &Rhs) -> Bool<'a, B>;
-    fn lt(&self, rhs: &Rhs) -> Bool<'a, B>;
-}
-
-/// Blanket implementation for `Ord` types.
-impl<'a, T: Ord, B: HasBool> Compare<'a, T, B> for T {
-    fn eq(&self, rhs: &Self) -> Bool<'a, B> {
-        Bool::<B>::from(self == rhs)
-    }
-
-    fn le(&self, rhs: &Self) -> Bool<'a, B> {
-        Bool::<B>::from(self <= rhs)
-    }
-
-    fn lt(&self, rhs: &Self) -> Bool<'a, B> {
-        Bool::<B>::from(self < rhs)
-    }
-}
-
-/// Conditional branch (if-then-else).
-pub trait Conditional: RustValue<bool> {
-    /// Picks a value to return based on a Boolean value.
-    fn conditional<T>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T
-    where
-        Self: Scope<T>;
-}
-
-/// Fixed-point loop (do-while).
-pub trait FixedPoint: HasBool {
-    /// Iterates on a starting state until a condition is met and returns the final state.
-    fn fixed_point<'a, T>(&self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
-    where
-        Self: Scope<T>;
-}
 
 pub type ExecuteBody<'a, B, I, O> =
     dyn Fn(<B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a> + 'a;
@@ -120,9 +133,13 @@ pub type ExecuteBody<'a, B, I, O> =
 ///
 /// Used for test frameworks.
 pub trait Execute: Backend {
-    fn execute<I, O>(&self, func: &ExecuteBody<'_, Self, I, O>, input: I) -> O
+    /// The type of execution scopes.
+    type ExecuteScope<'a>;
+
+    fn execute<'a, I: 'a, O: 'a>(&self, func: &ExecuteBody<'a, Self, I, O>) -> impl Fn(I) -> O + 'a
     where
-        Self: RustValue<I> + RustValue<O>;
+        Self: for<'b> RustValueScope<Self::ExecuteScope<'b>, I>
+            + for<'b> RustValueScope<Self::ExecuteScope<'b>, O>;
 }
 
 macro_rules! tuple_blanket_impls {
@@ -134,14 +151,24 @@ macro_rules! tuple_blanket_impls {
             type Value<'a> = ($(<T as RustValue<$el>>::Value<'a>),*);
         }
 
-        impl<T, $($el),*> Scope<($($el,)*)> for T
+        impl<Ctx, T, $($el),*> Enter<Ctx, ($($el,)*)> for T
         where
-            $(T: Scope<$el>,)*
+            $(T: Enter<Ctx, $el>,)*
         {
             #[allow(non_snake_case)]
-            fn visit<Ctx>(&self, ctx: &mut Ctx, val: &($($el,)*)) {
+            fn enter(&self, ctx: &mut Ctx) -> ($($el,)*) {
+                ($(<T as Enter<Ctx, $el>>::enter(self, ctx),)*)
+            }
+        }
+
+        impl<Ctx, T, $($el),*> Leave<Ctx, ($($el,)*)> for T
+        where
+            $(T: Leave<Ctx, $el>,)*
+        {
+            #[allow(non_snake_case)]
+            fn leave(&self, ctx: &mut Ctx, val: ($($el,)*)) {
                 let ($($el,)*) = val;
-                $(self.visit(ctx, $el));*
+                $(self.leave(ctx, $el));*
             }
         }
     };
@@ -252,12 +279,18 @@ pub enum MaybeConst<C, V> {
     Variable(V),
 }
 
-impl<B: Scope<V>, C, V> Scope<MaybeConst<C, V>> for B {
-    fn visit<Ctx>(&self, ctx: &mut Ctx, value: &MaybeConst<C, V>) {
+impl<Ctx, B: Enter<Ctx, V>, C, V> Enter<Ctx, MaybeConst<C, V>> for B {
+    fn enter(&self, ctx: &mut Ctx) -> MaybeConst<C, V> {
+        MaybeConst::Variable(self.enter(ctx))
+    }
+}
+
+impl<Ctx, B: Leave<Ctx, V>, C, V> Leave<Ctx, MaybeConst<C, V>> for B {
+    fn leave(&self, ctx: &mut Ctx, value: MaybeConst<C, V>) {
         use MaybeConst::*;
         match value {
             Const(_) => {}
-            Variable(v) => self.visit(ctx, v),
+            Variable(v) => self.leave(ctx, v),
         }
     }
 }
@@ -268,75 +301,67 @@ impl<T, V> From<T> for MaybeConst<T, V> {
     }
 }
 
-impl<'a, B, C, V> Compare<'a, C, B> for MaybeConst<C, V>
+impl<B, C, V> Compare<MaybeConst<C, V>, C> for B
 where
-    B: HasBool,
-    C: Ord,
-    V: Compare<'a, C, B>,
+    B: Compare<C, V> + Compare<C, C>,
 {
-    fn eq(&self, rhs: &C) -> Bool<'a, B> {
+    fn eq(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<B> {
         use MaybeConst::*;
-        match self {
-            Const(c) => Bool::<B>::from(c == rhs),
-            Variable(v) => v.eq(rhs),
+        match lhs {
+            Const(c) => self.eq(c, rhs),
+            Variable(v) => self.eq(v, rhs),
         }
     }
 
-    fn le(&self, rhs: &C) -> Bool<'a, B> {
+    fn le(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<B> {
         use MaybeConst::*;
         match self {
-            Const(c) => Bool::<B>::from(c <= rhs),
-            Variable(v) => v.le(rhs),
+            Const(c) => self.le(c, rhs),
+            Variable(v) => self.le(v, rhs),
         }
     }
 
-    fn lt(&self, rhs: &C) -> Bool<'a, B> {
+    fn lt(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<B> {
         use MaybeConst::*;
         match self {
-            Const(c) => Bool::<B>::from(c < rhs),
-            Variable(v) => v.lt(rhs),
+            Const(c) => self.lt(c, rhs),
+            Variable(v) => self.lt(v, rhs),
         }
     }
 }
 
-impl<'a, B, C, V> Compare<'a, Self, B> for MaybeConst<C, V>
+impl<B, C, V> Compare<MaybeConst<C, V>, MaybeConst<C, V>> for B
 where
-    B: HasBool,
-    Self: Compare<'a, C, B>,
-    V: Compare<'a, V, B>,
+    B: Compare<MaybeConst<C, V>, C> + Compare<V, V> + HasBool,
 {
-    fn eq(&self, rhs: &Self) -> Bool<'a, B> {
+    fn eq(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<B> {
         use MaybeConst::*;
         match (self, rhs) {
-            (Const(c), v) | (v, Const(c)) => v.eq(c),
-            (Variable(lhs), Variable(rhs)) => lhs.eq(rhs),
+            (Const(c), v) | (v, Const(c)) => self.eq(v, c),
+            (Variable(lhs), Variable(rhs)) => self.eq(lhs, rhs),
         }
     }
 
-    fn le(&self, rhs: &Self) -> Bool<'a, B> {
+    fn le(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<B> {
         use MaybeConst::*;
         match (self, rhs) {
-            (lhs, Const(rhs)) => lhs.le(rhs),
-            (Const(lhs), rhs) => rhs.lt(lhs).not(),
-            (Variable(lhs), Variable(rhs)) => lhs.le(rhs),
+            (lhs, Const(rhs)) => self.le(lhs, rhs),
+            (Const(lhs), rhs) => self.lt(rhs, lhs).not(),
+            (Variable(lhs), Variable(rhs)) => self.le(lhs, rhs),
         }
     }
 
-    fn lt(&self, rhs: &Self) -> Bool<'a, B> {
+    fn lt(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<B> {
         use MaybeConst::*;
         match (self, rhs) {
-            (lhs, Const(rhs)) => lhs.lt(rhs),
-            (Const(lhs), rhs) => rhs.le(lhs).not(),
-            (Variable(lhs), Variable(rhs)) => lhs.lt(rhs),
+            (lhs, Const(rhs)) => self.lt(lhs, rhs),
+            (Const(lhs), rhs) => self.le(rhs, lhs).not(),
+            (Variable(lhs), Variable(rhs)) => self.lt(lhs, rhs),
         }
     }
 }
 
-impl<C, V> Not for MaybeConst<C, V>
-where
-    C: Not<Output = C>,
-    V: Not<Output = V>,
-{
+impl<C: SelfNot, V: SelfNot> Not for MaybeConst<C, V> {
     type Output = Self;
 
     fn not(self) -> Self::Output {
