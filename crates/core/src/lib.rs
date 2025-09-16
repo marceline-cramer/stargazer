@@ -198,27 +198,31 @@ pub trait JitScopes: Backend {
 }
 
 pub trait JitEnter<'a, T>:
-    JitScopes + Leave<Self::InputScope<'a>, T> + RustValueEnter<'a, Self::FuncScope<'a>, T>
+    JitScopes + Leave<Self::InputScope<'a>, T> + for<'b> RustValueEnter<'a, Self::FuncScope<'b>, T>
 {
 }
 
 impl<'a, B, T> JitEnter<'a, T> for B where
-    B: JitScopes + Leave<Self::InputScope<'a>, T> + RustValueEnter<'a, Self::FuncScope<'a>, T>
+    B: JitScopes
+        + Leave<Self::InputScope<'a>, T>
+        + for<'b> RustValueEnter<'a, Self::FuncScope<'b>, T>
 {
 }
 
 pub trait JitLeave<'a, T>:
-    JitScopes + RustValueLeave<'a, Self::FuncScope<'a>, T> + Enter<Self::OutputScope<'a>, T>
+    JitScopes + for<'b> RustValueLeave<'a, Self::FuncScope<'b>, T> + Enter<Self::OutputScope<'a>, T>
 {
 }
 
 impl<'a, B, T> JitLeave<'a, T> for B where
-    B: JitScopes + RustValueLeave<'a, Self::FuncScope<'a>, T> + Enter<Self::OutputScope<'a>, T>
+    B: JitScopes
+        + for<'b> RustValueLeave<'a, Self::FuncScope<'b>, T>
+        + Enter<Self::OutputScope<'a>, T>
 {
 }
 
 pub trait JitBody<'a, B, I, O>:
-    Fn(<B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a> + 'a
+    FnOnce(<B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a>
 where
     B: RustValue<I> + RustValue<O> + ?Sized,
 {
@@ -226,13 +230,16 @@ where
 
 impl<'a, F, B, I, O> JitBody<'a, B, I, O> for F
 where
-    F: Fn(<B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a> + 'a,
+    F: Fn(<B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a>,
     B: RustValue<I> + RustValue<O> + ?Sized,
 {
 }
 
 pub trait Jit: JitScopes {
-    fn jit<'a, I, O>(&'a self, body: impl JitBody<'a, Self, I, O>) -> impl FnMut(I) -> O + 'a
+    fn jit<'a, I, O>(
+        &'a self,
+        body: impl for<'b> JitBody<'b, Self, I, O>,
+    ) -> impl FnMut(I) -> O + 'a
     where
         Self: JitEnter<'a, I> + JitLeave<'a, O>;
 }
