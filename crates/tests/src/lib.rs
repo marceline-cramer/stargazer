@@ -39,7 +39,7 @@ pub fn test_assert_eq<'a, B, I, O>(
     function: impl Fn(&B, <B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a> + 'a,
     tests: &[(I, O)],
 ) where
-    B: JitEnter<I> + JitLeave<O> + Jit,
+    B: JitEnter<'a, I> + JitLeave<'a, O> + Jit,
     I: Clone + Debug + 'static,
     O: Debug + 'static,
     for<'b> &'b O: Eq,

@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     marker::PhantomData,
     ops::{Add, Div, Mul, Not, Rem, Sub},
 };
@@ -12,31 +11,24 @@ pub struct WasmBackend {}
 
 impl Backend for WasmBackend {}
 
-pub enum WasmScope<'a> {
-    Func(&'a FuncBuilder<'a>),
-    Block(BlockBuilder<'a>),
-}
-
 impl<T: WasmValue> RustValue<T> for WasmBackend {
     type Value<'a> = MaybeConst<T, WasmInteger<'a, T>>;
 }
 
 pub struct WasmInteger<'a, T> {
     id: usize,
-    ctx: &'a BlockBuilder<'a>,
+    ctx: &'a BlockBuilder,
     _phantom: PhantomData<T>,
 }
 
-pub struct BlockBuilder<'a> {
-    backend: &'a WasmBackend,
-}
+pub struct BlockBuilder {}
 
 impl<'a, T> Copy for WasmInteger<'a, T> {}
 
 pub struct FuncBuilder<'a> {
     inputs: Vec<ValType>,
     outputs: Vec<ValType>,
-    block: &'a BlockBuilder<'a>,
+    block: &'a BlockBuilder,
 }
 
 impl<'a, T: WasmValue> Enter<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBackend {
@@ -58,14 +50,14 @@ impl<'a, T: WasmValue> Leave<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBacken
     }
 }
 
-impl<'a, 'b, T: WasmValue> Enter<BlockBuilder<'a>, WasmInteger<'b, T>> for WasmBackend {
-    fn enter(&self, ctx: &mut BlockBuilder<'a>) -> WasmInteger<'b, T> {
+impl<'a, 'b, T: WasmValue> Enter<BlockBuilder, WasmInteger<'b, T>> for WasmBackend {
+    fn enter(&self, ctx: &mut BlockBuilder) -> WasmInteger<'b, T> {
         todo!("populate enter() for BlockBuilder")
     }
 }
 
-impl<'a, 'b, T: WasmValue> Leave<BlockBuilder<'a>, WasmInteger<'b, T>> for WasmBackend {
-    fn leave(&self, ctx: &mut BlockBuilder<'a>, value: WasmInteger<'b, T>) {
+impl<'a, 'b, T: WasmValue> Leave<BlockBuilder, WasmInteger<'b, T>> for WasmBackend {
+    fn leave(&self, ctx: &mut BlockBuilder, value: WasmInteger<'b, T>) {
         todo!("populate leave() for BlockBuilder")
     }
 }
@@ -231,22 +223,22 @@ impl<'a, T: AsWasm> Rem<T> for WasmInteger<'a, T::Primitive> {
 }
 
 impl Conditional for WasmBackend {
-    type ConditionalScope<'a> = BlockBuilder<'a>;
+    type ConditionalScope<'a> = BlockBuilder;
 
     fn conditional<T>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T
     where
-        Self: for<'a> Scope<BlockBuilder<'a>, T>,
+        Self: Scope<BlockBuilder, T>,
     {
         todo!()
     }
 }
 
 impl FixedPoint for WasmBackend {
-    type FixedPointScope<'a> = BlockBuilder<'a>;
+    type FixedPointScope<'a> = BlockBuilder;
 
     fn fixed_point<'a, T>(&self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
     where
-        Self: for<'b> Scope<BlockBuilder<'b>, T>,
+        Self: Scope<BlockBuilder, T>,
     {
         todo!()
     }
@@ -273,9 +265,9 @@ impl<T: WasmValue> Leave<Vec<Val>, T> for WasmBackend {
 impl Jit for WasmBackend {
     fn jit<'a, I, O>(&'a self, body: impl JitBody<'a, Self, I, O>) -> impl FnMut(I) -> O + 'a
     where
-        Self: JitEnter<I> + JitLeave<O>,
+        Self: JitEnter<'a, I> + JitLeave<'a, O>,
     {
-        let block = BlockBuilder { backend: self };
+        let block = BlockBuilder {};
 
         let mut func_builder = FuncBuilder {
             inputs: vec![],

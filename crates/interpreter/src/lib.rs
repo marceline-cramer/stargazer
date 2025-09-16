@@ -49,9 +49,9 @@ impl JitScopes for Interpreter {
 }
 
 impl Jit for Interpreter {
-    fn jit<'a, I, O>(&'a self, body: impl JitBody<'a, Self, I, O>) -> impl Fn(I) -> O + 'a
+    fn jit<'a, I, O>(&'a self, body: impl JitBody<'a, Self, I, O>) -> impl FnMut(I) -> O + 'a
     where
-        Self: JitEnter<I> + JitLeave<O>,
+        Self: JitEnter<'a, I> + JitLeave<'a, O>,
     {
         move |inputs| {
             let mut scope = InterpreterScope::new();

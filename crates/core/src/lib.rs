@@ -149,7 +149,12 @@ impl<B, T> RustControlFlow<T> for B where
 
 /// This backend fully supports a number type.
 pub trait RustNum<T: Num>:
-    RustCompare<T> + RustNumOps<T> + RustConst<T> + JitEnter<T> + JitLeave<T> + RustControlFlow<T>
+    RustCompare<T>
+    + RustNumOps<T>
+    + RustConst<T>
+    + for<'a> JitEnter<'a, T>
+    + for<'a> JitLeave<'a, T>
+    + RustControlFlow<T>
 {
 }
 
@@ -157,8 +162,8 @@ impl<B, T: Num> RustNum<T> for B where
     B: RustCompare<T>
         + RustNumOps<T>
         + RustConst<T>
-        + JitEnter<T>
-        + JitLeave<T>
+        + for<'a> JitEnter<'a, T>
+        + for<'a> JitLeave<'a, T>
         + RustControlFlow<T>
 {
 }
@@ -166,23 +171,23 @@ impl<B, T: Num> RustNum<T> for B where
 /// Type alias for a backend's Boolean value.
 pub type Bool<'a, T> = <T as RustValue<bool>>::Value<'a>;
 
-pub trait RustValueEnter<S, T>:
-    RustValue<T> + for<'a> Enter<S, <Self as RustValue<T>>::Value<'a>>
+pub trait RustValueEnter<'a, S, T>:
+    RustValue<T> + Enter<S, <Self as RustValue<T>>::Value<'a>>
 {
 }
 
-impl<B, S, T> RustValueEnter<S, T> for B where
-    B: RustValue<T> + for<'a> Enter<S, <Self as RustValue<T>>::Value<'a>>
+impl<'a, B, S, T> RustValueEnter<'a, S, T> for B where
+    B: RustValue<T> + Enter<S, <Self as RustValue<T>>::Value<'a>>
 {
 }
 
-pub trait RustValueLeave<S, T>:
-    RustValue<T> + for<'a> Leave<S, <Self as RustValue<T>>::Value<'a>>
+pub trait RustValueLeave<'a, S, T>:
+    RustValue<T> + Leave<S, <Self as RustValue<T>>::Value<'a>>
 {
 }
 
-impl<B, S, T> RustValueLeave<S, T> for B where
-    B: RustValue<T> + for<'a> Leave<S, <Self as RustValue<T>>::Value<'a>>
+impl<'a, B, S, T> RustValueLeave<'a, S, T> for B where
+    B: RustValue<T> + Leave<S, <Self as RustValue<T>>::Value<'a>>
 {
 }
 
@@ -192,27 +197,23 @@ pub trait JitScopes: Backend {
     type OutputScope<'a>;
 }
 
-pub trait JitEnter<T>:
-    JitScopes + for<'a> Leave<Self::InputScope<'a>, T> + for<'a> RustValueEnter<Self::FuncScope<'a>, T>
+pub trait JitEnter<'a, T>:
+    JitScopes + Leave<Self::InputScope<'a>, T> + RustValueEnter<'a, Self::FuncScope<'a>, T>
 {
 }
 
-impl<B, T> JitEnter<T> for B where
-    B: JitScopes
-        + for<'a> Leave<Self::InputScope<'a>, T>
-        + for<'a> RustValueEnter<Self::FuncScope<'a>, T>
+impl<'a, B, T> JitEnter<'a, T> for B where
+    B: JitScopes + Leave<Self::InputScope<'a>, T> + RustValueEnter<'a, Self::FuncScope<'a>, T>
 {
 }
 
-pub trait JitLeave<T>:
-    JitScopes + for<'a> RustValueLeave<Self::FuncScope<'a>, T> + for<'a> Enter<Self::OutputScope<'a>, T>
+pub trait JitLeave<'a, T>:
+    JitScopes + RustValueLeave<'a, Self::FuncScope<'a>, T> + Enter<Self::OutputScope<'a>, T>
 {
 }
 
-impl<B, T> JitLeave<T> for B where
-    B: JitScopes
-        + for<'a> RustValueLeave<Self::FuncScope<'a>, T>
-        + for<'a> Enter<Self::OutputScope<'a>, T>
+impl<'a, B, T> JitLeave<'a, T> for B where
+    B: JitScopes + RustValueLeave<'a, Self::FuncScope<'a>, T> + Enter<Self::OutputScope<'a>, T>
 {
 }
 
@@ -233,7 +234,7 @@ where
 pub trait Jit: JitScopes {
     fn jit<'a, I, O>(&'a self, body: impl JitBody<'a, Self, I, O>) -> impl FnMut(I) -> O + 'a
     where
-        Self: JitEnter<I> + JitLeave<O>;
+        Self: JitEnter<'a, I> + JitLeave<'a, O>;
 }
 
 macro_rules! tuple_blanket_impls {
