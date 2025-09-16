@@ -5,6 +5,7 @@ use std::{
 };
 
 use stargazer_core::*;
+use wasmi::{Val, ValType};
 
 #[derive(Clone, Debug, Default)]
 pub struct WasmBackend {}
@@ -12,19 +13,12 @@ pub struct WasmBackend {}
 impl Backend for WasmBackend {}
 
 pub enum WasmScope<'a> {
-    Func(&'a RefCell<FuncBuilder>),
+    Func(&'a FuncBuilder<'a>),
     Block(BlockBuilder<'a>),
 }
 
 impl<T: WasmValue> RustValue<T> for WasmBackend {
     type Value<'a> = MaybeConst<T, WasmInteger<'a, T>>;
-}
-
-pub enum WasmPrimitiveKind {
-    I32,
-    I64,
-    F32,
-    F64,
 }
 
 pub struct WasmInteger<'a, T> {
@@ -40,14 +34,15 @@ pub struct BlockBuilder<'a> {
 impl<'a, T> Copy for WasmInteger<'a, T> {}
 
 pub struct FuncBuilder<'a> {
-    args: Vec<WasmPrimitiveKind>,
+    inputs: Vec<ValType>,
+    outputs: Vec<ValType>,
     block: &'a BlockBuilder<'a>,
 }
 
 impl<'a, T: WasmValue> Enter<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBackend {
     fn enter(&self, ctx: &mut FuncBuilder<'a>) -> WasmInteger<'a, T> {
-        let id = ctx.args.len();
-        ctx.args.push(T::KIND);
+        let id = ctx.inputs.len();
+        ctx.inputs.push(T::TY);
 
         WasmInteger {
             id,
@@ -57,24 +52,19 @@ impl<'a, T: WasmValue> Enter<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBacken
     }
 }
 
-impl<'a, T: WasmValue> Enter<BlockBuilder<'a>, WasmInteger<'a, T>> for WasmBackend {
-    fn enter(&self, ctx: &mut BlockBuilder<'a>) -> WasmInteger<'a, T> {
-        let id = ctx.args.len();
-        ctx.args.push(T::KIND);
-
-        WasmInteger {
-            id,
-            ctx: ctx.block,
-            _phantom: PhantomData,
-        }
+impl<'a, T: WasmValue> Leave<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBackend {
+    fn leave(&self, scope: &mut FuncBuilder<'a>, value: WasmInteger<'a, T>) {
+        todo!("populate leave() for FuncBuilder")
     }
 }
 
-impl<'a, 'b, T: WasmValue> Scope<BlockBuilder<'a>, WasmInteger<'b, T>> for WasmBackend {
+impl<'a, 'b, T: WasmValue> Enter<BlockBuilder<'a>, WasmInteger<'b, T>> for WasmBackend {
     fn enter(&self, ctx: &mut BlockBuilder<'a>) -> WasmInteger<'b, T> {
         todo!("populate enter() for BlockBuilder")
     }
+}
 
+impl<'a, 'b, T: WasmValue> Leave<BlockBuilder<'a>, WasmInteger<'b, T>> for WasmBackend {
     fn leave(&self, ctx: &mut BlockBuilder<'a>, value: WasmInteger<'b, T>) {
         todo!("populate leave() for BlockBuilder")
     }
@@ -99,28 +89,38 @@ impl<'a> Not for WasmInteger<'a, bool> {
 }
 
 pub trait AsWasm: Copy {
-    type Primitive: WasmValue;
-    const KIND: WasmPrimitiveKind;
-
+    const TY: ValType;
+    type Primitive: AsWasm;
     fn pushOnTop(&self);
 }
 
-pub trait WasmValue: AsWasm {}
-
-impl WasmValue for bool {}
+pub trait WasmValue: AsWasm {
+    fn to_val(&self) -> Val;
+    fn from_val(val: Val) -> Self;
+}
 
 impl AsWasm for bool {
+    const TY: ValType = ValType::I32;
     type Primitive = bool;
-    const KIND: WasmPrimitiveKind = WasmPrimitiveKind::I32;
 
     fn pushOnTop(&self) {
         todo!()
     }
 }
 
+impl WasmValue for bool {
+    fn to_val(&self) -> Val {
+        Val::I32(*self as i32)
+    }
+
+    fn from_val(val: Val) -> Self {
+        val.i32().unwrap() != 0
+    }
+}
+
 impl<'a, T: WasmValue> AsWasm for WasmInteger<'a, T> {
+    const TY: ValType = T::TY;
     type Primitive = T;
-    const KIND: WasmPrimitiveKind = T::KIND;
 
     fn pushOnTop(&self) {
         todo!()
@@ -140,16 +140,24 @@ macro_rules! impl_rhs_op {
 }
 
 macro_rules! impl_as_wasm {
-    ($kind:expr,) => {};
-    ($kind:expr, $head:ty $(, $tail:ty)*) => {
-        impl WasmValue for $head {}
-
+    ($accessor:ident, $kind:ident,) => {};
+    ($accessor:ident, $kind:ident, $head:ty $(, $tail:ty)*) => {
         impl AsWasm for $head {
+            const TY: ValType = ValType::$kind;
             type Primitive = $head;
-            const KIND: WasmPrimitiveKind = $kind;
 
-            fn push(&self) {
+            fn pushOnTop(&self) {
                 todo!()
+            }
+        }
+
+        impl WasmValue for $head {
+            fn to_val(&self) -> Val {
+                Val::$kind(*self as _)
+            }
+
+            fn from_val(val: Val) -> Self {
+                val.$accessor().unwrap() as Self
             }
         }
 
@@ -157,25 +165,27 @@ macro_rules! impl_as_wasm {
         impl_rhs_op!($head, Div, div);
         impl_rhs_op!($head, Rem, rem);
 
-        impl_as_wasm!($kind, $($tail),*);
+        impl_as_wasm!($accessor, $kind, $($tail),*);
     };
 }
 
-impl_as_wasm!(WasmPrimitiveKind::I32, u8, u16, u32, i8, i16, i32);
-impl_as_wasm!(WasmPrimitiveKind::I64, u64, i64);
-impl_as_wasm!(WasmPrimitiveKind::F32, f32);
-impl_as_wasm!(WasmPrimitiveKind::F64, f64);
+impl_as_wasm!(i32, I32, u8, u16, u32, i8, i16, i32);
+impl_as_wasm!(i64, I64, u64, i64);
 
-impl<'a, T: AsWasm> Compare<'a, T, WasmBackend> for WasmInteger<'a, T> {
-    fn eq(&self, rhs: &T) -> Bool<'a, WasmBackend> {
+// TODO: handle from_val() for floats
+// impl_as_wasm!(f32, F32, f32);
+// impl_as_wasm!(f64, F64, f64);
+
+impl<'a, T: AsWasm> Compare<WasmInteger<'a, T::Primitive>, T> for WasmBackend {
+    fn eq(&self, lhs: WasmInteger<'a, T::Primitive>, rhs: T) -> Bool<WasmBackend> {
         todo!()
     }
 
-    fn le(&self, rhs: &T) -> Bool<'a, WasmBackend> {
+    fn le(&self, lhs: WasmInteger<'a, T::Primitive>, rhs: T) -> Bool<WasmBackend> {
         todo!()
     }
 
-    fn lt(&self, rhs: &T) -> Bool<'a, WasmBackend> {
+    fn lt(&self, lhs: WasmInteger<'a, T::Primitive>, rhs: T) -> Bool<WasmBackend> {
         todo!()
     }
 }
@@ -242,17 +252,40 @@ impl FixedPoint for WasmBackend {
     }
 }
 
-impl Execute for WasmBackend {
-    type ExecuteScope<'a> = FuncBuilder;
+impl JitScopes for WasmBackend {
+    type InputScope<'a> = Vec<Val>;
+    type FuncScope<'a> = FuncBuilder<'a>;
+    type OutputScope<'a> = Vec<Val>;
+}
 
-    fn execute<'a, I: 'a, O: 'a>(&self, func: &JitBody<'a, Self, I, O>) -> impl Fn(I) -> O + 'a
+impl<T: WasmValue> Enter<Vec<Val>, T> for WasmBackend {
+    fn enter(&self, scope: &mut Vec<Val>) -> T {
+        T::from_val(scope.pop().unwrap())
+    }
+}
+
+impl<T: WasmValue> Leave<Vec<Val>, T> for WasmBackend {
+    fn leave(&self, scope: &mut Vec<Val>, value: T) {
+        scope.push(value.to_val());
+    }
+}
+
+impl Jit for WasmBackend {
+    fn jit<'a, I, O>(&'a self, body: impl JitBody<'a, Self, I, O>) -> impl FnMut(I) -> O + 'a
     where
-        Self: RustValueScope<FuncBuilder, I> + RustValueScope<FuncBuilder, O>,
+        Self: JitEnter<I> + JitLeave<O>,
     {
-        let mut builder = FuncBuilder::default();
-        let entered = self.enter(&mut builder);
-        let executed = (*func)(entered);
-        self.leave(&mut builder, executed);
+        let block = BlockBuilder { backend: self };
+
+        let mut func_builder = FuncBuilder {
+            inputs: vec![],
+            outputs: vec![],
+            block: &block,
+        };
+
+        let entered = self.enter(&mut func_builder);
+        let executed = body(entered);
+        self.leave(&mut func_builder, executed);
 
         let wasm = &[];
 
@@ -260,14 +293,18 @@ impl Execute for WasmBackend {
         let engine = Engine::default();
         let module = Module::new(&engine, wasm).unwrap();
         let mut store = Store::new(&engine, 0u32);
-        let mut linker = Linker::new(&engine);
+        let linker = Linker::new(&engine);
         let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
         let func = instance.get_func(&store, "main").unwrap();
 
         move |inputs| {
+            let mut input_vals = Vec::new();
+            self.leave(&mut input_vals, inputs);
             let mut output_vals = vec![Val::default(ValType::F64)];
-            func.call(&mut store, input_vals, &mut output_vals).unwrap();
-            todo!()
+            func.call(&mut store, &input_vals, &mut output_vals)
+                .unwrap();
+            output_vals.reverse();
+            self.enter(&mut output_vals)
         }
     }
 }

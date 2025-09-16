@@ -231,7 +231,7 @@ where
 }
 
 pub trait Jit: JitScopes {
-    fn jit<'a, I, O>(&'a self, body: impl JitBody<'a, Self, I, O>) -> impl Fn(I) -> O + 'a
+    fn jit<'a, I, O>(&'a self, body: impl JitBody<'a, Self, I, O>) -> impl FnMut(I) -> O + 'a
     where
         Self: JitEnter<I> + JitLeave<O>;
 }

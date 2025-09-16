@@ -45,7 +45,7 @@ pub fn test_assert_eq<'a, B, I, O>(
     for<'b> &'b O: Eq,
 {
     let wrapped = move |input| function(backend, input);
-    let func = backend.jit(wrapped);
+    let mut func = backend.jit(wrapped);
     for (input, expected) in tests.iter() {
         let got = func(input.clone());
         assert_eq!(expected, &got, "input {input:?}");
