@@ -45,7 +45,7 @@ pub trait FixedPoint: RustValue<bool> {
     type FixedPointScope<'a>;
 
     /// Iterates on a starting state until a condition is met and returns the final state.
-    fn fixed_point<'a, T: 'a>(&self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
+    fn fixed_point<'a, T>(&'a self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
     where
         Self: for<'b> Scope<Self::FixedPointScope<'b>, T>;
 }
@@ -71,7 +71,7 @@ pub trait SelfNot: Not<Output = Self> {}
 impl<T: Not<Output = T>> SelfNot for T {}
 
 /// Implements comparison between two types.
-pub trait Compare<L, R>: RustValue<bool> {
+pub trait Compare<L, R = L>: RustValue<bool> {
     fn eq(&self, lhs: L, rhs: R) -> Bool<Self>;
     fn le(&self, lhs: L, rhs: R) -> Bool<Self>;
     fn lt(&self, lhs: L, rhs: R) -> Bool<Self>;
@@ -95,7 +95,7 @@ impl<T: Ord, B: RustConst<bool>> Compare<T, T> for B {
 /// Support comparing a Rust type against its backend value.
 pub trait RustCompare<T>:
     RustValue<T>
-    + for<'a> Compare<T, <Self as RustValue<T>>::Value<'a>>
+    + for<'a> Compare<<Self as RustValue<T>>::Value<'a>>
     + for<'a> Compare<<Self as RustValue<T>>::Value<'a>, T>
 {
 }
@@ -103,7 +103,7 @@ pub trait RustCompare<T>:
 impl<B, T> RustCompare<T> for B where
     B: RustValue<T>
         + Compare<T, T>
-        + for<'a> Compare<T, <Self as RustValue<T>>::Value<'a>>
+        + for<'a> Compare<<Self as RustValue<T>>::Value<'a>>
         + for<'a> Compare<<Self as RustValue<T>>::Value<'a>, T>
 {
 }
@@ -119,14 +119,47 @@ impl<B, T: NumOps> RustNumOps<T> for B where
 {
 }
 
+/// Blanket trait for types that support basic control flow operations.
+pub trait ControlFlow<T>:
+    Conditional
+    + FixedPoint
+    + for<'a> Scope<Self::ConditionalScope<'a>, T>
+    + for<'a> Scope<Self::FixedPointScope<'a>, T>
+{
+}
+
+impl<B, T> ControlFlow<T> for B where
+    B: Conditional
+        + FixedPoint
+        + for<'a> Scope<Self::ConditionalScope<'a>, T>
+        + for<'a> Scope<Self::FixedPointScope<'a>, T>
+{
+}
+
+/// Blanket trait for Rust values that support basic control flow operations.
+pub trait RustControlFlow<T>:
+    RustValue<T> + for<'a> ControlFlow<<Self as RustValue<T>>::Value<'a>>
+{
+}
+
+impl<B, T> RustControlFlow<T> for B where
+    B: RustValue<T> + for<'a> ControlFlow<<Self as RustValue<T>>::Value<'a>>
+{
+}
+
 /// This backend fully supports a number type.
 pub trait RustNum<T: Num>:
-    RustCompare<T> + RustNumOps<T> + RustConst<T> + JitEnter<T> + JitLeave<T>
+    RustCompare<T> + RustNumOps<T> + RustConst<T> + JitEnter<T> + JitLeave<T> + RustControlFlow<T>
 {
 }
 
 impl<B, T: Num> RustNum<T> for B where
-    B: RustCompare<T> + RustNumOps<T> + RustConst<T> + JitEnter<T> + JitLeave<T>
+    B: RustCompare<T>
+        + RustNumOps<T>
+        + RustConst<T>
+        + JitEnter<T>
+        + JitLeave<T>
+        + RustControlFlow<T>
 {
 }
 

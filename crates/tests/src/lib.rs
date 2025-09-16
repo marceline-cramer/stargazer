@@ -52,14 +52,14 @@ pub fn test_assert_eq<'a, B, I, O>(
     }
 }
 
-fn fib<'a, B: FixedPoint + Conditional + RustNum<u64>>(backend: &B, num: U64<'a, B>) -> U64<'a, B> {
+fn fib<'a, B: RustNum<u64>>(backend: &B, num: U64<'a, B>) -> U64<'a, B> {
     let start = (U64::<B>::from(0), U64::<B>::from(0), U64::<B>::from(1));
 
-    let (_, last, _) = backend.fixed_point(start, |(mut idx, a, b)| {
+    let (_, last, _) = backend.fixed_point::<(_, _, _)>(start, |(mut idx, a, b)| {
         idx += 1;
         let c = a + b;
-        let stop = num.lt(&idx);
-        let (at, next) = backend.conditional(stop, (a, b), (b, c));
+        let stop = backend.lt(num, idx);
+        let (at, next) = backend.conditional::<(_, _)>(stop, (a, b), (b, c));
         (stop, (idx, at, next))
     });
 
