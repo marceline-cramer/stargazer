@@ -120,26 +120,87 @@ impl<B, T: NumOps> RustNumOps<T> for B where
 }
 
 /// This backend fully supports a number type.
-pub trait RustNum<T: Num>: RustCompare<T> + RustNumOps<T> + RustConst<T> {}
-impl<B, T: Num> RustNum<T> for B where B: RustCompare<T> + RustNumOps<T> + RustConst<T> {}
+pub trait RustNum<T: Num>:
+    RustCompare<T> + RustNumOps<T> + RustConst<T> + JitEnter<T> + JitLeave<T>
+{
+}
+
+impl<B, T: Num> RustNum<T> for B where
+    B: RustCompare<T> + RustNumOps<T> + RustConst<T> + JitEnter<T> + JitLeave<T>
+{
+}
 
 /// Type alias for a backend's Boolean value.
 pub type Bool<'a, T> = <T as RustValue<bool>>::Value<'a>;
 
-pub type ExecuteBody<'a, B, I, O> =
-    dyn Fn(<B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a> + 'a;
+pub trait RustValueEnter<S, T>:
+    RustValue<T> + for<'a> Enter<S, <Self as RustValue<T>>::Value<'a>>
+{
+}
 
-/// Immediately runs a function with runtime Rust data.
-///
-/// Used for test frameworks.
-pub trait Execute: Backend {
-    /// The type of execution scopes.
-    type ExecuteScope<'a>;
+impl<B, S, T> RustValueEnter<S, T> for B where
+    B: RustValue<T> + for<'a> Enter<S, <Self as RustValue<T>>::Value<'a>>
+{
+}
 
-    fn execute<'a, I: 'a, O: 'a>(&self, func: &ExecuteBody<'a, Self, I, O>) -> impl Fn(I) -> O + 'a
+pub trait RustValueLeave<S, T>:
+    RustValue<T> + for<'a> Leave<S, <Self as RustValue<T>>::Value<'a>>
+{
+}
+
+impl<B, S, T> RustValueLeave<S, T> for B where
+    B: RustValue<T> + for<'a> Leave<S, <Self as RustValue<T>>::Value<'a>>
+{
+}
+
+pub trait JitScopes: Backend {
+    type InputScope<'a>;
+    type FuncScope<'a>;
+    type OutputScope<'a>;
+}
+
+pub trait JitEnter<T>:
+    JitScopes + for<'a> Leave<Self::InputScope<'a>, T> + for<'a> RustValueEnter<Self::FuncScope<'a>, T>
+{
+}
+
+impl<B, T> JitEnter<T> for B where
+    B: JitScopes
+        + for<'a> Leave<Self::InputScope<'a>, T>
+        + for<'a> RustValueEnter<Self::FuncScope<'a>, T>
+{
+}
+
+pub trait JitLeave<T>:
+    JitScopes + for<'a> RustValueLeave<Self::FuncScope<'a>, T> + for<'a> Enter<Self::OutputScope<'a>, T>
+{
+}
+
+impl<B, T> JitLeave<T> for B where
+    B: JitScopes
+        + for<'a> RustValueLeave<Self::FuncScope<'a>, T>
+        + for<'a> Enter<Self::OutputScope<'a>, T>
+{
+}
+
+pub trait JitBody<'a, B, I, O>:
+    Fn(<B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a> + 'a
+where
+    B: RustValue<I> + RustValue<O> + ?Sized,
+{
+}
+
+impl<'a, F, B, I, O> JitBody<'a, B, I, O> for F
+where
+    F: Fn(<B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a> + 'a,
+    B: RustValue<I> + RustValue<O> + ?Sized,
+{
+}
+
+pub trait Jit: JitScopes {
+    fn jit<'a, I, O>(&'a self, body: impl JitBody<'a, Self, I, O>) -> impl Fn(I) -> O + 'a
     where
-        Self: for<'b> RustValueScope<Self::ExecuteScope<'b>, I>
-            + for<'b> RustValueScope<Self::ExecuteScope<'b>, O>;
+        Self: JitEnter<I> + JitLeave<O>;
 }
 
 macro_rules! tuple_blanket_impls {
@@ -303,7 +364,7 @@ impl<T, V> From<T> for MaybeConst<T, V> {
 
 impl<B, C, V> Compare<MaybeConst<C, V>, C> for B
 where
-    B: Compare<C, V> + Compare<C, C>,
+    B: Compare<V, C> + Compare<C, C>,
 {
     fn eq(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<B> {
         use MaybeConst::*;
@@ -315,7 +376,7 @@ where
 
     fn le(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<B> {
         use MaybeConst::*;
-        match self {
+        match lhs {
             Const(c) => self.le(c, rhs),
             Variable(v) => self.le(v, rhs),
         }
@@ -323,7 +384,7 @@ where
 
     fn lt(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<B> {
         use MaybeConst::*;
-        match self {
+        match lhs {
             Const(c) => self.lt(c, rhs),
             Variable(v) => self.lt(v, rhs),
         }
@@ -336,7 +397,7 @@ where
 {
     fn eq(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<B> {
         use MaybeConst::*;
-        match (self, rhs) {
+        match (lhs, rhs) {
             (Const(c), v) | (v, Const(c)) => self.eq(v, c),
             (Variable(lhs), Variable(rhs)) => self.eq(lhs, rhs),
         }
@@ -344,7 +405,7 @@ where
 
     fn le(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<B> {
         use MaybeConst::*;
-        match (self, rhs) {
+        match (lhs, rhs) {
             (lhs, Const(rhs)) => self.le(lhs, rhs),
             (Const(lhs), rhs) => self.lt(rhs, lhs).not(),
             (Variable(lhs), Variable(rhs)) => self.le(lhs, rhs),
@@ -353,7 +414,7 @@ where
 
     fn lt(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<B> {
         use MaybeConst::*;
-        match (self, rhs) {
+        match (lhs, rhs) {
             (lhs, Const(rhs)) => self.lt(lhs, rhs),
             (Const(lhs), rhs) => self.le(rhs, lhs).not(),
             (Variable(lhs), Variable(rhs)) => self.lt(lhs, rhs),

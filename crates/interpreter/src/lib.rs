@@ -9,11 +9,13 @@ impl Backend for Interpreter {}
 
 type InterpreterScope = Vec<Box<dyn Any>>;
 
-impl<T: Primitive> Scope<InterpreterScope, T> for Interpreter {
+impl<T: Primitive> Enter<InterpreterScope, T> for Interpreter {
     fn enter(&self, ctx: &mut InterpreterScope) -> T {
-        *ctx.remove(0).downcast().unwrap()
+        *ctx.pop().unwrap().downcast().unwrap()
     }
+}
 
+impl<T: Primitive> Leave<InterpreterScope, T> for Interpreter {
     fn leave(&self, ctx: &mut InterpreterScope, value: T) {
         ctx.push(Box::new(value));
     }
@@ -40,16 +42,30 @@ impl FixedPoint for Interpreter {
     }
 }
 
-impl Execute for Interpreter {
-    type ExecuteScope<'a> = InterpreterScope;
+impl JitScopes for Interpreter {
+    type InputScope<'a> = InterpreterScope;
+    type FuncScope<'a> = InterpreterScope;
+    type OutputScope<'a> = InterpreterScope;
+}
 
-    fn execute<'a, I: 'a, O: 'a>(&self, func: &ExecuteBody<'a, Self, I, O>) -> impl Fn(I) -> O + 'a
+impl Jit for Interpreter {
+    fn jit<'a, I, O>(&'a self, body: impl JitBody<'a, Self, I, O>) -> impl Fn(I) -> O + 'a
     where
-        Self: RustValueScope<InterpreterScope, I> + RustValueScope<InterpreterScope, O>,
+        Self: JitEnter<I> + JitLeave<O>,
     {
-        // TODO: implement this without transmutation
-        let converted: &dyn Fn(I) -> O = unsafe { core::mem::transmute(func) };
-        Box::new(converted)
+        move |inputs| {
+            let mut scope = InterpreterScope::new();
+            self.leave(&mut scope, inputs);
+            scope.reverse();
+            let inputs = self.enter(&mut scope);
+
+            let outputs = body(inputs);
+
+            let mut scope = InterpreterScope::new();
+            self.leave(&mut scope, outputs);
+            scope.reverse();
+            self.enter(&mut scope)
+        }
     }
 }
 

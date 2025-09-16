@@ -1,14 +1,13 @@
 use core::fmt::Debug;
 
-use num::{Bounded, traits::NumOps};
+use num::{Bounded, Num};
 use stargazer_core::*;
 
-pub fn unsigned_arith_tests<T: From<u8> + NumOps + Bounded>(backend: &(impl Execute + RustNum<T>)) {
-}
+pub fn unsigned_arith_tests<T: From<u8> + Num + Bounded>(backend: &(impl Jit + RustNum<T>)) {}
 
-pub fn signed_arith_tests<T: From<u8> + NumOps + Bounded>(backend: &(impl Execute + RustNum<T>)) {}
+pub fn signed_arith_tests<T: From<u8> + Num + Bounded>(backend: &(impl Jit + RustNum<T>)) {}
 
-fn add<'a, T: NumOps, B: RustNum<T>>(
+fn add<'a, T: Num, B: RustNum<T>>(
     _backend: &B,
     lhs: <B as RustValue<T>>::Value<'a>,
     rhs: <B as RustValue<T>>::Value<'a>,
@@ -16,7 +15,7 @@ fn add<'a, T: NumOps, B: RustNum<T>>(
     lhs + rhs
 }
 
-pub fn basic_tests<B: Execute + Basic>(backend: &B) {
+pub fn basic_tests<B: Jit + Basic>(backend: &B) {
     test_assert_eq::<B, u64, u64>(
         backend,
         fib,
@@ -40,13 +39,13 @@ pub fn test_assert_eq<'a, B, I, O>(
     function: impl Fn(&B, <B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a> + 'a,
     tests: &[(I, O)],
 ) where
-    B: RustValueControlFlow<I> + RustValueControlFlow<O>,
+    B: JitEnter<I> + JitLeave<O> + Jit,
     I: Clone + Debug + 'static,
     O: Debug + 'static,
     for<'b> &'b O: Eq,
 {
     let wrapped = move |input| function(backend, input);
-    let func = backend.execute(&wrapped);
+    let func = backend.jit(wrapped);
     for (input, expected) in tests.iter() {
         let got = func(input.clone());
         assert_eq!(expected, &got, "input {input:?}");

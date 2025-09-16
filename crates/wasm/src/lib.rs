@@ -245,7 +245,7 @@ impl FixedPoint for WasmBackend {
 impl Execute for WasmBackend {
     type ExecuteScope<'a> = FuncBuilder;
 
-    fn execute<'a, I: 'a, O: 'a>(&self, func: &ExecuteBody<'a, Self, I, O>) -> impl Fn(I) -> O + 'a
+    fn execute<'a, I: 'a, O: 'a>(&self, func: &JitBody<'a, Self, I, O>) -> impl Fn(I) -> O + 'a
     where
         Self: RustValueScope<FuncBuilder, I> + RustValueScope<FuncBuilder, O>,
     {
