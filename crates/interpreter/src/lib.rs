@@ -49,7 +49,10 @@ impl JitScopes for Interpreter {
 }
 
 impl Jit for Interpreter {
-    fn jit<'a, I, O>(&'a self, body: impl JitBody<'a, Self, I, O>) -> impl FnMut(I) -> O + 'a
+    fn jit<'a, I, O>(
+        &'a self,
+        body: impl for<'b> JitBody<'b, Self, I, O> + 'a,
+    ) -> impl FnMut(I) -> O + 'a
     where
         Self: JitEnter<'a, I> + JitLeave<'a, O>,
     {

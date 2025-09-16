@@ -265,7 +265,7 @@ impl<T: WasmValue> Leave<Vec<Val>, T> for WasmBackend {
 impl Jit for WasmBackend {
     fn jit<'a, I, O>(
         &'a self,
-        body: impl for<'b> JitBody<'b, Self, I, O>,
+        body: impl for<'b> JitBody<'b, Self, I, O> + 'a,
     ) -> impl FnMut(I) -> O + 'a
     where
         Self: JitEnter<'a, I> + JitLeave<'a, O>,

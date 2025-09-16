@@ -222,7 +222,7 @@ impl<'a, B, T> JitLeave<'a, T> for B where
 }
 
 pub trait JitBody<'a, B, I, O>:
-    FnOnce(<B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a>
+    Fn(<B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a>
 where
     B: RustValue<I> + RustValue<O> + ?Sized,
 {
@@ -238,7 +238,7 @@ where
 pub trait Jit: JitScopes {
     fn jit<'a, I, O>(
         &'a self,
-        body: impl for<'b> JitBody<'b, Self, I, O>,
+        body: impl for<'b> JitBody<'b, Self, I, O> + 'a,
     ) -> impl FnMut(I) -> O + 'a
     where
         Self: JitEnter<'a, I> + JitLeave<'a, O>;
