@@ -3,7 +3,55 @@ use core::fmt::Debug;
 use num::{Bounded, Num};
 use stargazer_core::*;
 
-pub fn unsigned_arith_tests<T: From<u8> + Num + Bounded>(backend: &(impl Jit + RustNum<T>)) {}
+pub fn unsigned_arith_tests<
+    B: Jit + RustNum<T> + 'static,
+    T: Copy + Debug + From<u8> + Num + Bounded + Eq + 'static,
+>(
+    backend: &B,
+) {
+    test_assert_eq::<_, T, T>(
+        backend,
+        |_backend, lhs| lhs + <B as RustValue<T>>::Value::from(5.into()),
+        &[
+            (T::from(0), T::from(5)),
+            (T::from(1), T::from(6)),
+            (T::from(10), T::from(15)),
+            (T::from(255), T::from(255) + T::from(5)),
+        ],
+    );
+
+    test_assert_eq::<_, (T, T), T>(
+        backend,
+        |_backend, (lhs, rhs)| add(backend, lhs, rhs),
+        &[
+            ((T::from(0), T::from(0)), T::from(0)),
+            ((T::from(1), T::from(2)), T::from(3)),
+            ((T::from(10), T::from(20)), T::from(30)),
+            ((T::from(100), T::from(155)), T::from(255)),
+        ],
+    );
+
+    test_assert_eq::<_, (T, T), T>(
+        backend,
+        |_backend, (lhs, rhs)| lhs * rhs,
+        &[
+            ((T::from(0), T::from(5)), T::from(0)),
+            ((T::from(1), T::from(1)), T::from(1)),
+            ((T::from(2), T::from(3)), T::from(6)),
+            ((T::from(10), T::from(10)), T::from(100)),
+        ],
+    );
+
+    test_assert_eq::<_, (T, T), T>(
+        backend,
+        |_backend, (lhs, rhs)| lhs - rhs,
+        &[
+            ((T::from(10), T::from(5)), T::from(5)),
+            ((T::from(100), T::from(50)), T::from(50)),
+            ((T::from(255), T::from(1)), T::from(254)),
+        ],
+    );
+}
 
 pub fn signed_arith_tests<T: From<u8> + Num + Bounded>(backend: &(impl Jit + RustNum<T>)) {}
 

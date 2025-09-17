@@ -97,6 +97,12 @@ mod tests {
     use stargazer_tests::*;
 
     #[test]
+    fn interpreter_unsigned_arith() {
+        let backend = Interpreter;
+        unsigned_arith_tests::<_, u32>(&backend);
+    }
+
+    #[test]
     fn interpreter_basic_tests() {
         let backend = Interpreter;
         basic_tests(&backend);
