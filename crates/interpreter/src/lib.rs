@@ -62,7 +62,7 @@ impl Jit for Interpreter {
             scope.reverse();
             let inputs = self.enter(&mut scope);
 
-            let outputs = body(inputs);
+            let outputs = body(self, inputs);
 
             let mut scope = InterpreterScope::new();
             self.leave(&mut scope, outputs);

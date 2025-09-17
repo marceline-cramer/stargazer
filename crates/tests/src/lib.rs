@@ -15,7 +15,7 @@ fn add<'a, T: Num, B: RustNum<T>>(
     lhs + rhs
 }
 
-pub fn basic_tests<B: Jit + Basic>(backend: &B) {
+pub fn basic_tests<B: Jit + Basic + 'static>(backend: &B) {
     test_assert_eq::<B, u64, u64>(
         backend,
         fib,
@@ -36,7 +36,7 @@ pub fn basic_tests<B: Jit + Basic>(backend: &B) {
 
 pub fn test_assert_eq<'a, B, I, O>(
     backend: &'a B,
-    function: impl Fn(&B, <B as RustValue<I>>::Value<'a>) -> <B as RustValue<O>>::Value<'a> + 'a,
+    function: impl for<'b> JitBody<'b, B, I, O> + 'a,
     tests: &[(I, O)],
 ) where
     B: JitEnter<'a, I> + JitLeave<'a, O> + Jit,
@@ -44,15 +44,14 @@ pub fn test_assert_eq<'a, B, I, O>(
     O: Debug + 'static,
     for<'b> &'b O: Eq,
 {
-    let wrapped = move |input| function(backend, input);
-    let mut func = backend.jit(wrapped);
+    let mut func = backend.jit(function);
     for (input, expected) in tests.iter() {
         let got = func(input.clone());
         assert_eq!(expected, &got, "input {input:?}");
     }
 }
 
-fn fib<'a, B: RustNum<u64>>(backend: &B, num: U64<'a, B>) -> U64<'a, B> {
+fn fib<'a, B: RustNum<u64>>(backend: &'a B, num: U64<'a, B>) -> U64<'a, B> {
     let start = (U64::<B>::from(0), U64::<B>::from(0), U64::<B>::from(1));
 
     let (_, last, _) = backend.fixed_point::<(_, _, _)>(start, |(mut idx, a, b)| {
