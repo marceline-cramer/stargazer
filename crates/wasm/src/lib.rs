@@ -1,10 +1,12 @@
 use std::{
+    cell::RefCell,
+    fmt::{Display, Formatter, Write},
     marker::PhantomData,
     ops::{Add, Div, Mul, Not, Rem, Sub},
 };
 
 use stargazer_core::*;
-use wasmi::{Val, ValType};
+use wasmi::Val;
 
 #[derive(Clone, Debug, Default)]
 pub struct WasmBackend {}
@@ -21,14 +23,141 @@ pub struct WasmInteger<'a, T> {
     _phantom: PhantomData<T>,
 }
 
-pub struct BlockBuilder {}
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WasmPrimitive {
+    I32,
+    I64,
+    F32,
+    F64,
+}
+
+impl From<WasmPrimitive> for wasmi::ValType {
+    fn from(prim: WasmPrimitive) -> Self {
+        use wasmi::ValType::*;
+        match prim {
+            WasmPrimitive::I32 => I32,
+            WasmPrimitive::I64 => I64,
+            WasmPrimitive::F32 => F32,
+            WasmPrimitive::F64 => F64,
+        }
+    }
+}
+
+impl From<wasmi::ValType> for WasmPrimitive {
+    fn from(value: wasmi::ValType) -> Self {
+        use wasmi::ValType::*;
+        match value {
+            I32 => WasmPrimitive::I32,
+            I64 => WasmPrimitive::I64,
+            F32 => WasmPrimitive::F32,
+            F64 => WasmPrimitive::F64,
+            _ => unimplemented!("unsupported value type"),
+        }
+    }
+}
+
+impl Display for WasmPrimitive {
+    fn fmt(&self, w: &mut Formatter) -> std::fmt::Result {
+        use WasmPrimitive::*;
+        let name = match self {
+            I32 => "i32",
+            I64 => "i64",
+            F32 => "f32",
+            F64 => "f64",
+        };
+
+        write!(w, "{name}")
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct BlockBuilder {
+    locals: RefCell<Vec<WasmPrimitive>>,
+    instructions: RefCell<Vec<(String, Option<String>)>>,
+}
+
+impl BlockBuilder {
+    pub fn emit(&self, instr: impl ToString, comment: Option<impl ToString>) {
+        self.instructions
+            .borrow_mut()
+            .push((instr.to_string(), comment.map(|s| s.to_string())));
+    }
+
+    pub fn build(&self, output: &mut impl Write, prefix: &str) -> std::fmt::Result {
+        let instructions = self.instructions.borrow();
+
+        let max_width = instructions
+            .iter()
+            .map(|(instr, _)| instr.len())
+            .max()
+            .unwrap_or(0);
+
+        for (instr, comment) in instructions.iter() {
+            let Some(comment) = comment else {
+                writeln!(output, "{prefix}{}", instr)?;
+                continue;
+            };
+
+            writeln!(
+                output,
+                "{prefix}{:<width$} ;; {}",
+                instr,
+                comment,
+                width = max_width + 1
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn pop_value<T: WasmValue>(&self) -> WasmInteger<'_, T> {
+        let mut locals = self.locals.borrow_mut();
+        let id = locals.len();
+        locals.push(T::TY);
+
+        self.emit(
+            format!("local.set ${id}"),
+            Some(format!("pop_value<{}>", T::TY)),
+        );
+
+        WasmInteger {
+            id,
+            ctx: self,
+            _phantom: PhantomData,
+        }
+    }
+}
 
 impl<'a, T> Copy for WasmInteger<'a, T> {}
 
 pub struct FuncBuilder<'a> {
-    inputs: Vec<ValType>,
-    outputs: Vec<ValType>,
+    inputs: Vec<WasmPrimitive>,
+    outputs: Vec<WasmPrimitive>,
     block: &'a BlockBuilder,
+}
+
+impl<'a> FuncBuilder<'a> {
+    pub fn to_module(&self, name: &str, output: &mut impl Write) -> std::fmt::Result {
+        writeln!(output, "(module")?;
+        writeln!(output, "  (export \"{name}\" (func ${name}))",)?;
+
+        writeln!(output, "  (func ${name}")?;
+
+        for (id, ty) in self.inputs.iter().enumerate() {
+            writeln!(output, "    (param ${id} {ty})")?;
+        }
+
+        for ty in &self.outputs {
+            writeln!(output, "    (result {ty})")?;
+        }
+
+        self.block.build(output, "    ")?;
+
+        writeln!(output, "  )")?;
+        writeln!(output, ")")?;
+
+        Ok(())
+    }
 }
 
 impl<'a, T: WasmValue> Enter<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBackend {
@@ -46,7 +175,8 @@ impl<'a, T: WasmValue> Enter<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBacken
 
 impl<'a, T: WasmValue> Leave<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBackend {
     fn leave(&self, scope: &mut FuncBuilder<'a>, value: WasmInteger<'a, T>) {
-        todo!("populate leave() for FuncBuilder")
+        scope.outputs.push(T::TY);
+        value.pushOnTop(scope.block);
     }
 }
 
@@ -81,9 +211,9 @@ impl<'a> Not for WasmInteger<'a, bool> {
 }
 
 pub trait AsWasm: Copy {
-    const TY: ValType;
-    type Primitive: AsWasm;
-    fn pushOnTop(&self);
+    const TY: WasmPrimitive;
+    type Primitive: WasmValue;
+    fn pushOnTop(&self, block: &BlockBuilder);
 }
 
 pub trait WasmValue: AsWasm {
@@ -92,11 +222,14 @@ pub trait WasmValue: AsWasm {
 }
 
 impl AsWasm for bool {
-    const TY: ValType = ValType::I32;
+    const TY: WasmPrimitive = WasmPrimitive::I32;
     type Primitive = bool;
 
-    fn pushOnTop(&self) {
-        todo!()
+    fn pushOnTop(&self, block: &BlockBuilder) {
+        block.emit(
+            format!("i32.const {}", if *self { 1 } else { 0 }),
+            Some(self),
+        );
     }
 }
 
@@ -111,11 +244,16 @@ impl WasmValue for bool {
 }
 
 impl<'a, T: WasmValue> AsWasm for WasmInteger<'a, T> {
-    const TY: ValType = T::TY;
+    const TY: WasmPrimitive = T::TY;
     type Primitive = T;
 
-    fn pushOnTop(&self) {
-        todo!()
+    fn pushOnTop(&self, block: &BlockBuilder) {
+        assert!(core::ptr::eq(block, self.ctx));
+
+        block.emit(
+            format!("local.get ${}", self.id),
+            Some(format!("push WasmInteger<{}>", T::TY)),
+        );
     }
 }
 
@@ -135,11 +273,11 @@ macro_rules! impl_as_wasm {
     ($accessor:ident, $kind:ident,) => {};
     ($accessor:ident, $kind:ident, $head:ty $(, $tail:ty)*) => {
         impl AsWasm for $head {
-            const TY: ValType = ValType::$kind;
+            const TY: WasmPrimitive = WasmPrimitive::$kind;
             type Primitive = $head;
 
-            fn pushOnTop(&self) {
-                todo!()
+            fn pushOnTop(&self, block: &BlockBuilder) {
+                block.emit(format!("{}.const {}", Self::TY, self), Some(self));
             }
         }
 
@@ -186,7 +324,13 @@ impl<'a, T: AsWasm> Add<T> for WasmInteger<'a, T::Primitive> {
     type Output = Self;
 
     fn add(self, rhs: T) -> Self::Output {
-        todo!()
+        self.pushOnTop(self.ctx);
+        rhs.pushOnTop(self.ctx);
+
+        self.ctx
+            .emit(format!("{}.add", T::TY), Some(format!("Add<{}>", T::TY)));
+
+        self.ctx.pop_value()
     }
 }
 
@@ -270,7 +414,7 @@ impl Jit for WasmBackend {
     where
         Self: JitEnter<'a, I> + JitLeave<'a, O>,
     {
-        let block = BlockBuilder {};
+        let block = BlockBuilder::default();
 
         let mut func_builder = FuncBuilder {
             inputs: vec![],
@@ -279,14 +423,16 @@ impl Jit for WasmBackend {
         };
 
         let entered = self.enter(&mut func_builder);
-        let executed = body(entered);
+        let executed = body(self, entered);
         self.leave(&mut func_builder, executed);
 
-        let wasm = &[];
+        let mut wasm = String::new();
+        func_builder.to_module("main", &mut wasm).unwrap();
+        println!("{wasm}");
 
         use wasmi::*;
         let engine = Engine::default();
-        let module = Module::new(&engine, wasm).unwrap();
+        let module = Module::new(&engine, wasm.as_bytes()).unwrap();
         let mut store = Store::new(&engine, 0u32);
         let linker = Linker::new(&engine);
         let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
@@ -308,11 +454,41 @@ impl Jit for WasmBackend {
 mod tests {
     use super::*;
 
-    use stargazer_tests::unsigned_arith_tests;
+    use stargazer_tests::*;
 
     #[test]
-    fn wasm_unsigned_arith() {
+    fn wasm_u32_arith() {
         let backend = WasmBackend::default();
-        unsigned_arith_tests::<u32>(&backend);
+        unsigned_arith_tests::<_, u8>(&backend);
+        unsigned_arith_tests::<_, u16>(&backend);
+        unsigned_arith_tests::<_, u32>(&backend);
+        unsigned_arith_tests::<_, u32>(&backend);
+    }
+
+    #[test]
+    fn wasm_u64_arith() {
+        let backend = WasmBackend::default();
+        unsigned_arith_tests::<_, u64>(&backend);
+    }
+
+    #[test]
+    fn wasm_i32_arith() {
+        let backend = WasmBackend::default();
+        signed_arith_tests::<_, i8>(&backend);
+        signed_arith_tests::<_, i16>(&backend);
+        signed_arith_tests::<_, i32>(&backend);
+        signed_arith_tests::<_, i32>(&backend);
+    }
+
+    #[test]
+    fn wasm_i64_arith() {
+        let backend = WasmBackend::default();
+        signed_arith_tests::<_, i64>(&backend);
+    }
+
+    #[test]
+    fn wasm_basic() {
+        let backend = WasmBackend::default();
+        basic_tests(&backend);
     }
 }

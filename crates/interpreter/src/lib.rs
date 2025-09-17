@@ -99,7 +99,23 @@ mod tests {
     #[test]
     fn interpreter_unsigned_arith() {
         let backend = Interpreter;
+        unsigned_arith_tests::<_, u8>(&backend);
+        unsigned_arith_tests::<_, u16>(&backend);
         unsigned_arith_tests::<_, u32>(&backend);
+        unsigned_arith_tests::<_, u32>(&backend);
+        unsigned_arith_tests::<_, u64>(&backend);
+        unsigned_arith_tests::<_, u128>(&backend);
+    }
+
+    #[test]
+    fn interpreter_signed_arith() {
+        let backend = Interpreter;
+        signed_arith_tests::<_, i8>(&backend);
+        signed_arith_tests::<_, i16>(&backend);
+        signed_arith_tests::<_, i32>(&backend);
+        signed_arith_tests::<_, i32>(&backend);
+        signed_arith_tests::<_, i64>(&backend);
+        signed_arith_tests::<_, i128>(&backend);
     }
 
     #[test]
