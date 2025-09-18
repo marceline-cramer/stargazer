@@ -125,12 +125,12 @@ macro_rules! impl_rhs_op {
 }
 
 impl<'a, T: WasmValue> WasmInteger<'a, T> {
-    pub fn binary_op<Rhs: AsWasm<Primitive = T>>(
+    pub fn binary_op<Rhs: AsWasm<Primitive = T>, O: WasmValue>(
         &self,
         rhs: Rhs,
         signed: &str,
         unsigned: &str,
-    ) -> WasmInteger<'a, T> {
+    ) -> WasmInteger<'a, O> {
         self.push_on_top(self.block);
         rhs.push_on_top(self.block);
 
@@ -143,17 +143,17 @@ impl<'a, T: WasmValue> WasmInteger<'a, T> {
     }
 }
 
-impl<'a, T: AsWasm> Compare<WasmInteger<'a, T::Primitive>, T> for WasmBackend {
-    fn eq(&self, lhs: WasmInteger<'a, T::Primitive>, rhs: T) -> Bool<WasmBackend> {
-        todo!()
+impl<'a, T: AsWasm + 'a> Compare<'a, WasmInteger<'a, T::Primitive>, T> for WasmBackend {
+    fn eq(&self, lhs: WasmInteger<'a, T::Primitive>, rhs: T) -> Bool<'a, WasmBackend> {
+        MaybeConst::Variable(lhs.binary_op(rhs, "eq", "eq"))
     }
 
-    fn le(&self, lhs: WasmInteger<'a, T::Primitive>, rhs: T) -> Bool<WasmBackend> {
-        todo!()
+    fn le(&self, lhs: WasmInteger<'a, T::Primitive>, rhs: T) -> Bool<'a, WasmBackend> {
+        MaybeConst::Variable(lhs.binary_op(rhs, "le_s", "le_u"))
     }
 
-    fn lt(&self, lhs: WasmInteger<'a, T::Primitive>, rhs: T) -> Bool<WasmBackend> {
-        todo!()
+    fn lt(&self, lhs: WasmInteger<'a, T::Primitive>, rhs: T) -> Bool<'a, WasmBackend> {
+        MaybeConst::Variable(lhs.binary_op(rhs, "lt_s", "lt_u"))
     }
 }
 
@@ -240,7 +240,12 @@ impl<'a> FuncBuilder<'a> {
             writeln!(output, "    (result {ty})")?;
         }
 
-        self.block.ctx.borrow().build(output, "    ")?;
+        let ctx = self.block.ctx.borrow();
+        for (id, ty) in ctx.locals.iter().enumerate().skip(ctx.arg_num) {
+            writeln!(output, "    (local ${id} {ty})")?;
+        }
+
+        ctx.build(output, "    ")?;
 
         writeln!(output, "  )")?;
         writeln!(output, ")")?;
@@ -253,6 +258,10 @@ impl<'a, T: WasmValue> Enter<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBacken
     fn enter(&self, func: &mut FuncBuilder<'a>) -> WasmInteger<'a, T> {
         let id = func.inputs.len();
         func.inputs.push(T::TY);
+
+        let mut ctx = func.block.ctx.borrow_mut();
+        ctx.locals.push(T::TY);
+        ctx.arg_num += 1;
 
         WasmInteger {
             id,
@@ -312,6 +321,7 @@ impl<'a, T> Copy for WasmInteger<'a, T> {}
 #[derive(Clone, Debug, Default)]
 pub struct Context {
     locals: Vec<WasmPrimitive>,
+    arg_num: usize,
     instructions: Vec<(String, String)>,
 }
 
@@ -368,7 +378,7 @@ pub trait AsWasm: Copy {
     fn push_on_top(&self, block: &BlockBuilder);
 }
 
-pub trait WasmValue: AsWasm {
+pub trait WasmValue: AsWasm + 'static {
     fn to_val(&self) -> Val;
     fn from_val(val: Val) -> Self;
 }
