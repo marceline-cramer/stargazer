@@ -7,7 +7,7 @@ use stargazer_core::*;
 // TODO: rhs arithmetic tests
 
 pub fn unsigned_arith_tests<
-    B: Jit + RustNum<T> + 'static,
+    B: Jit + RustNum<T> + HasBool + 'static,
     T: Copy + Debug + From<u8> + Num + Bounded + Eq + 'static,
 >(
     backend: &B,
@@ -70,6 +70,49 @@ pub fn unsigned_arith_tests<
             ((T::from(100), T::from(10)), T::from(0)),
             ((T::from(255), T::from(2)), T::from(1)),
             // TODO: modulo by zero?
+        ],
+    );
+
+    test_assert_eq::<_, (T, T), bool>(
+        format!("{ty} == {ty}"),
+        backend,
+        |backend, (lhs, rhs)| backend.eq(lhs, rhs),
+        &[
+            ((T::from(0), T::from(0)), true),
+            ((T::from(0), T::from(1)), false),
+            ((T::from(1), T::from(1)), true),
+            ((T::from(10), T::from(10)), true),
+            ((T::from(1), T::from(0)), false),
+            ((T::from(10), T::from(11)), false),
+        ],
+    );
+
+    test_assert_eq::<_, (T, T), bool>(
+        format!("{ty} <= {ty}"),
+        backend,
+        |backend, (lhs, rhs)| backend.le(lhs, rhs),
+        &[
+            ((T::from(0), T::from(0)), true),
+            ((T::from(0), T::from(5)), true),
+            ((T::from(0), T::from(1)), true),
+            ((T::from(1), T::from(1)), true),
+            ((T::from(10), T::from(10)), true),
+            ((T::from(1), T::from(0)), false),
+            ((T::from(10), T::from(11)), true),
+        ],
+    );
+
+    test_assert_eq::<_, (T, T), bool>(
+        format!("{ty} < {ty}"),
+        backend,
+        |backend, (lhs, rhs)| backend.lt(lhs, rhs),
+        &[
+            ((T::from(0), T::from(5)), true),
+            ((T::from(0), T::from(1)), true),
+            ((T::from(1), T::from(1)), false),
+            ((T::from(10), T::from(10)), false),
+            ((T::from(1), T::from(0)), false),
+            ((T::from(10), T::from(11)), true),
         ],
     );
 }
