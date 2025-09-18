@@ -60,8 +60,19 @@ pub trait RustConst<T>: for<'a> RustValue<T, Value<'a>: From<T>> {}
 impl<T, B: RustValue<T>> RustConst<T> for B where for<'a> B::Value<'a>: From<T> {}
 
 /// Annotates that the Boolean type is fully supported by a backend.
-pub trait HasBool: for<'a> RustConst<bool, Value<'a>: SelfNot> {}
-impl<B: RustConst<bool>> HasBool for B where for<'a> B::Value<'a>: SelfNot {}
+pub trait HasBool:
+    for<'a> RustConst<bool, Value<'a>: SelfNot>
+    + for<'a> JitEnter<'a, bool>
+    + for<'a> JitLeave<'a, bool>
+{
+}
+
+impl<B: RustConst<bool>> HasBool for B
+where
+    for<'a> B::Value<'a>: SelfNot,
+    B: for<'a> JitEnter<'a, bool> + for<'a> JitLeave<'a, bool>,
+{
+}
 
 /// Blanket trait for types whose [Not] implementation is themselves.
 ///
@@ -71,23 +82,23 @@ pub trait SelfNot: Not<Output = Self> {}
 impl<T: Not<Output = T>> SelfNot for T {}
 
 /// Implements comparison between two types.
-pub trait Compare<L, R = L>: RustValue<bool> {
-    fn eq(&self, lhs: L, rhs: R) -> Bool<Self>;
-    fn le(&self, lhs: L, rhs: R) -> Bool<Self>;
-    fn lt(&self, lhs: L, rhs: R) -> Bool<Self>;
+pub trait Compare<'a, L: 'a, R: 'a = L>: RustValue<bool> {
+    fn eq(&self, lhs: L, rhs: R) -> Bool<'a, Self>;
+    fn le(&self, lhs: L, rhs: R) -> Bool<'a, Self>;
+    fn lt(&self, lhs: L, rhs: R) -> Bool<'a, Self>;
 }
 
 /// Blanket implementation for `Ord` types.
-impl<T: Ord, B: RustConst<bool>> Compare<T, T> for B {
-    fn eq(&self, lhs: T, rhs: T) -> Bool<B> {
+impl<'a, T: Ord + 'a, B: RustConst<bool>> Compare<'a, T, T> for B {
+    fn eq(&self, lhs: T, rhs: T) -> Bool<'a, B> {
         Bool::<B>::from(lhs == rhs)
     }
 
-    fn le(&self, lhs: T, rhs: T) -> Bool<B> {
+    fn le(&self, lhs: T, rhs: T) -> Bool<'a, B> {
         Bool::<B>::from(lhs <= rhs)
     }
 
-    fn lt(&self, lhs: T, rhs: T) -> Bool<B> {
+    fn lt(&self, lhs: T, rhs: T) -> Bool<'a, B> {
         Bool::<B>::from(lhs < rhs)
     }
 }
@@ -95,16 +106,16 @@ impl<T: Ord, B: RustConst<bool>> Compare<T, T> for B {
 /// Support comparing a Rust type against its backend value.
 pub trait RustCompare<T>:
     RustValue<T>
-    + for<'a> Compare<<Self as RustValue<T>>::Value<'a>>
-    + for<'a> Compare<<Self as RustValue<T>>::Value<'a>, T>
+    + for<'a> Compare<'a, <Self as RustValue<T>>::Value<'a>>
+    + for<'a> Compare<'a, <Self as RustValue<T>>::Value<'a>, T>
 {
 }
 
 impl<B, T> RustCompare<T> for B where
     B: RustValue<T>
-        + Compare<T, T>
-        + for<'a> Compare<<Self as RustValue<T>>::Value<'a>>
-        + for<'a> Compare<<Self as RustValue<T>>::Value<'a>, T>
+        + for<'a> Compare<'a, T, T>
+        + for<'a> Compare<'a, <Self as RustValue<T>>::Value<'a>>
+        + for<'a> Compare<'a, <Self as RustValue<T>>::Value<'a>, T>
 {
 }
 
@@ -403,11 +414,13 @@ impl<T, V> From<T> for MaybeConst<T, V> {
     }
 }
 
-impl<B, C, V> Compare<MaybeConst<C, V>, C> for B
+impl<'a, B, C, V> Compare<'a, MaybeConst<C, V>, C> for B
 where
-    B: Compare<V, C> + Compare<C, C>,
+    C: 'a,
+    V: 'a,
+    B: Compare<'a, V, C> + Compare<'a, C, C>,
 {
-    fn eq(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<B> {
+    fn eq(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<'a, B> {
         use MaybeConst::*;
         match lhs {
             Const(c) => self.eq(c, rhs),
@@ -415,7 +428,7 @@ where
         }
     }
 
-    fn le(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<B> {
+    fn le(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<'a, B> {
         use MaybeConst::*;
         match lhs {
             Const(c) => self.le(c, rhs),
@@ -423,7 +436,7 @@ where
         }
     }
 
-    fn lt(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<B> {
+    fn lt(&self, lhs: MaybeConst<C, V>, rhs: C) -> Bool<'a, B> {
         use MaybeConst::*;
         match lhs {
             Const(c) => self.lt(c, rhs),
@@ -432,11 +445,13 @@ where
     }
 }
 
-impl<B, C, V> Compare<MaybeConst<C, V>, MaybeConst<C, V>> for B
+impl<'a, B, C, V> Compare<'a, MaybeConst<C, V>, MaybeConst<C, V>> for B
 where
-    B: Compare<MaybeConst<C, V>, C> + Compare<V, V> + HasBool,
+    C: 'a,
+    V: 'a,
+    B: Compare<'a, MaybeConst<C, V>, C> + Compare<'a, V, V> + HasBool,
 {
-    fn eq(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<B> {
+    fn eq(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<'a, B> {
         use MaybeConst::*;
         match (lhs, rhs) {
             (Const(c), v) | (v, Const(c)) => self.eq(v, c),
@@ -444,7 +459,7 @@ where
         }
     }
 
-    fn le(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<B> {
+    fn le(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<'a, B> {
         use MaybeConst::*;
         match (lhs, rhs) {
             (lhs, Const(rhs)) => self.le(lhs, rhs),
@@ -453,7 +468,7 @@ where
         }
     }
 
-    fn lt(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<B> {
+    fn lt(&self, lhs: MaybeConst<C, V>, rhs: MaybeConst<C, V>) -> Bool<'a, B> {
         use MaybeConst::*;
         match (lhs, rhs) {
             (lhs, Const(rhs)) => self.lt(lhs, rhs),
