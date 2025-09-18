@@ -12,7 +12,10 @@ pub fn unsigned_arith_tests<
 >(
     backend: &B,
 ) {
+    let ty = std::any::type_name::<T>();
+
     test_assert_eq::<_, T, T>(
+        format!("{ty} + 5"),
         backend,
         |_backend, lhs| lhs + T::from(5),
         &[
@@ -24,6 +27,7 @@ pub fn unsigned_arith_tests<
     );
 
     test_assert_eq::<_, (T, T), T>(
+        format!("{ty} - {ty}"),
         backend,
         |_backend, (lhs, rhs)| lhs - rhs,
         &[
@@ -34,6 +38,7 @@ pub fn unsigned_arith_tests<
     );
 
     test_assert_eq::<_, (T, T), T>(
+        format!("{ty} * {ty}"),
         backend,
         |_backend, (lhs, rhs)| lhs * rhs,
         &[
@@ -45,6 +50,7 @@ pub fn unsigned_arith_tests<
     );
 
     test_assert_eq::<_, (T, T), T>(
+        format!("{ty} / {ty}"),
         backend,
         |_backend, (lhs, rhs)| lhs / rhs,
         &[
@@ -56,6 +62,7 @@ pub fn unsigned_arith_tests<
     );
 
     test_assert_eq::<_, (T, T), T>(
+        format!("{ty} % {ty}"),
         backend,
         |_backend, (lhs, rhs)| lhs % rhs,
         &[
@@ -73,7 +80,10 @@ pub fn signed_arith_tests<
 >(
     backend: &B,
 ) {
+    let ty = std::any::type_name::<T>();
+
     test_assert_eq::<_, T, T>(
+        format!("{ty} + 5"),
         backend,
         |_backend, lhs| lhs + T::from(5),
         &[
@@ -85,6 +95,7 @@ pub fn signed_arith_tests<
     );
 
     test_assert_eq::<_, (T, T), T>(
+        format!("{ty} - {ty}"),
         backend,
         |_backend, (lhs, rhs)| lhs - rhs,
         &[
@@ -96,6 +107,7 @@ pub fn signed_arith_tests<
     );
 
     test_assert_eq::<_, (T, T), T>(
+        format!("{ty} * {ty}"),
         backend,
         |_backend, (lhs, rhs)| lhs * rhs,
         &[
@@ -107,6 +119,7 @@ pub fn signed_arith_tests<
     );
 
     test_assert_eq::<_, (T, T), T>(
+        format!("{ty} / {ty}"),
         backend,
         |_backend, (lhs, rhs)| lhs / rhs,
         &[
@@ -118,6 +131,7 @@ pub fn signed_arith_tests<
     );
 
     test_assert_eq::<_, (T, T), T>(
+        format!("{ty} % {ty}"),
         backend,
         |_backend, (lhs, rhs)| lhs % rhs,
         &[
@@ -133,6 +147,7 @@ pub fn signed_arith_tests<
 
 pub fn basic_tests<B: Jit + Basic + 'static>(backend: &B) {
     test_assert_eq::<B, u64, u64>(
+        "fibonacci sequence",
         backend,
         fib,
         &[
@@ -151,6 +166,7 @@ pub fn basic_tests<B: Jit + Basic + 'static>(backend: &B) {
 }
 
 pub fn test_assert_eq<'a, B, I, O>(
+    label: impl ToString,
     backend: &'a B,
     function: impl for<'b> JitBody<'b, B, I, O> + 'a,
     tests: &[(I, O)],
@@ -160,10 +176,13 @@ pub fn test_assert_eq<'a, B, I, O>(
     O: Debug + 'static,
     for<'b> &'b O: Eq,
 {
+    let label = label.to_string();
     let mut func = backend.jit(function);
     for (input, expected) in tests.iter() {
         let got = func(input.clone());
-        assert_eq!(expected, &got, "input {input:?}");
+        if &got != expected {
+            panic!("{label} failed: expected {expected:?}, got {got:?}, input {input:?}");
+        }
     }
 }
 
