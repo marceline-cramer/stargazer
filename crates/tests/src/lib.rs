@@ -19,7 +19,16 @@ pub fn unsigned_arith_tests<
             (T::max_value() - T::from(5), T::max_value()),
         ],
     );
-    return; // TODO: unblock these on wasm backends
+
+    test_assert_eq::<_, (T, T), T>(
+        backend,
+        |_backend, (lhs, rhs)| lhs - rhs,
+        &[
+            ((T::from(10), T::from(5)), T::from(5)),
+            ((T::from(100), T::from(50)), T::from(50)),
+            ((T::from(255), T::from(1)), T::from(254)),
+        ],
+    );
 
     test_assert_eq::<_, (T, T), T>(
         backend,
@@ -34,11 +43,23 @@ pub fn unsigned_arith_tests<
 
     test_assert_eq::<_, (T, T), T>(
         backend,
-        |_backend, (lhs, rhs)| lhs - rhs,
+        |_backend, (lhs, rhs)| lhs / rhs,
         &[
-            ((T::from(10), T::from(5)), T::from(5)),
-            ((T::from(100), T::from(50)), T::from(50)),
-            ((T::from(255), T::from(1)), T::from(254)),
+            ((T::from(10), T::from(2)), T::from(5)),
+            ((T::from(100), T::from(10)), T::from(10)),
+            ((T::from(255), T::from(2)), T::from(127)),
+            // TODO: divide by zero?
+        ],
+    );
+
+    test_assert_eq::<_, (T, T), T>(
+        backend,
+        |_backend, (lhs, rhs)| lhs % rhs,
+        &[
+            ((T::from(10), T::from(3)), T::from(1)),
+            ((T::from(100), T::from(10)), T::from(0)),
+            ((T::from(255), T::from(2)), T::from(1)),
+            // TODO: modulo by zero?
         ],
     );
 }
@@ -49,7 +70,62 @@ pub fn signed_arith_tests<
 >(
     backend: &B,
 ) {
-    todo!()
+    test_assert_eq::<_, T, T>(
+        backend,
+        |_backend, lhs| lhs + T::from(5),
+        &[
+            (T::from(-5), T::from(0)),
+            (T::from(0), T::from(5)),
+            (T::from(10), T::from(15)),
+            (T::from(-10), T::from(-5)),
+        ],
+    );
+
+    test_assert_eq::<_, (T, T), T>(
+        backend,
+        |_backend, (lhs, rhs)| lhs - rhs,
+        &[
+            ((T::from(-5), T::from(5)), T::from(-10)),
+            ((T::from(0), T::from(5)), T::from(-5)),
+            ((T::from(10), T::from(10)), T::from(0)),
+            ((T::from(-10), T::from(-5)), T::from(-5)),
+        ],
+    );
+
+    test_assert_eq::<_, (T, T), T>(
+        backend,
+        |_backend, (lhs, rhs)| lhs * rhs,
+        &[
+            ((T::from(-5), T::from(5)), T::from(-25)),
+            ((T::from(0), T::from(5)), T::from(0)),
+            ((T::from(10), T::from(10)), T::from(100)),
+            ((T::from(-10), T::from(-5)), T::from(50)),
+        ],
+    );
+
+    test_assert_eq::<_, (T, T), T>(
+        backend,
+        |_backend, (lhs, rhs)| lhs / rhs,
+        &[
+            ((T::from(-5), T::from(5)), T::from(-1)),
+            ((T::from(0), T::from(5)), T::from(0)),
+            ((T::from(10), T::from(10)), T::from(1)),
+            ((T::from(-10), T::from(-5)), T::from(2)),
+        ],
+    );
+
+    test_assert_eq::<_, (T, T), T>(
+        backend,
+        |_backend, (lhs, rhs)| lhs % rhs,
+        &[
+            ((T::from(-5), T::from(5)), T::from(0)),
+            ((T::from(0), T::from(5)), T::from(0)),
+            ((T::from(10), T::from(10)), T::from(0)),
+            ((T::from(-10), T::from(-5)), T::from(0)),
+            // TODO: negative modulos?
+            // TODO: modulo by zero?
+        ],
+    );
 }
 
 fn add<'a, T: Num, B: RustNum<T>>(
