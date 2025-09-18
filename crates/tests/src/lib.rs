@@ -3,6 +3,9 @@ use core::fmt::Debug;
 use num::{Bounded, Num};
 use stargazer_core::*;
 
+// TODO: Boolean logic tests
+// TODO: rhs arithmetic tests
+
 pub fn unsigned_arith_tests<
     B: Jit + RustNum<T> + 'static,
     T: Copy + Debug + From<u8> + Num + Bounded + Eq + 'static,
@@ -126,14 +129,6 @@ pub fn signed_arith_tests<
             // TODO: modulo by zero?
         ],
     );
-}
-
-fn add<'a, T: Num, B: RustNum<T>>(
-    _backend: &B,
-    lhs: <B as RustValue<T>>::Value<'a>,
-    rhs: <B as RustValue<T>>::Value<'a>,
-) -> <B as RustValue<T>>::Value<'a> {
-    lhs + rhs
 }
 
 pub fn basic_tests<B: Jit + Basic + 'static>(backend: &B) {

@@ -19,7 +19,7 @@ impl<T: WasmValue> RustValue<T> for WasmBackend {
 
 pub struct WasmInteger<'a, T> {
     id: usize,
-    ctx: &'a BlockBuilder,
+    block: &'a BlockBuilder,
     _phantom: PhantomData<T>,
 }
 
@@ -122,7 +122,7 @@ impl BlockBuilder {
 
         WasmInteger {
             id,
-            ctx: self,
+            block: self,
             _phantom: PhantomData,
         }
     }
@@ -167,7 +167,7 @@ impl<'a, T: WasmValue> Enter<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBacken
 
         WasmInteger {
             id,
-            ctx: ctx.block,
+            block: ctx.block,
             _phantom: PhantomData,
         }
     }
@@ -176,7 +176,7 @@ impl<'a, T: WasmValue> Enter<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBacken
 impl<'a, T: WasmValue> Leave<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBackend {
     fn leave(&self, scope: &mut FuncBuilder<'a>, value: WasmInteger<'a, T>) {
         scope.outputs.push(T::TY);
-        value.pushOnTop(scope.block);
+        value.push_on_top(scope.block);
     }
 }
 
@@ -196,7 +196,7 @@ impl<'a, T> Clone for WasmInteger<'a, T> {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
-            ctx: self.ctx,
+            block: self.block,
             _phantom: PhantomData,
         }
     }
@@ -206,14 +206,18 @@ impl<'a> Not for WasmInteger<'a, bool> {
     type Output = Self;
 
     fn not(self) -> Self::Output {
-        todo!()
+        self.push_on_top(self.block);
+        self.block.emit("i32.eqz", Some("not"));
+        self.block.pop_value()
     }
 }
 
 pub trait AsWasm: Copy {
     const TY: WasmPrimitive;
+    // TODO: move to a dedicated numeric trait?
+    const SIGNED: bool;
     type Primitive: WasmValue;
-    fn pushOnTop(&self, block: &BlockBuilder);
+    fn push_on_top(&self, block: &BlockBuilder);
 }
 
 pub trait WasmValue: AsWasm {
@@ -223,9 +227,10 @@ pub trait WasmValue: AsWasm {
 
 impl AsWasm for bool {
     const TY: WasmPrimitive = WasmPrimitive::I32;
+    const SIGNED: bool = false;
     type Primitive = bool;
 
-    fn pushOnTop(&self, block: &BlockBuilder) {
+    fn push_on_top(&self, block: &BlockBuilder) {
         block.emit(
             format!("i32.const {}", if *self { 1 } else { 0 }),
             Some(self),
@@ -245,10 +250,11 @@ impl WasmValue for bool {
 
 impl<'a, T: WasmValue> AsWasm for WasmInteger<'a, T> {
     const TY: WasmPrimitive = T::TY;
+    const SIGNED: bool = T::SIGNED;
     type Primitive = T;
 
-    fn pushOnTop(&self, block: &BlockBuilder) {
-        assert!(core::ptr::eq(block, self.ctx));
+    fn push_on_top(&self, block: &BlockBuilder) {
+        assert!(core::ptr::eq(block, self.block));
 
         block.emit(
             format!("local.get ${}", self.id),
@@ -270,13 +276,14 @@ macro_rules! impl_rhs_op {
 }
 
 macro_rules! impl_as_wasm {
-    ($accessor:ident, $kind:ident,) => {};
-    ($accessor:ident, $kind:ident, $head:ty $(, $tail:ty)*) => {
+    ($accessor:ident, $kind:ident, $signed:expr,) => {};
+    ($accessor:ident, $kind:ident, $signed:expr, $head:ty $(, $tail:ty)*) => {
         impl AsWasm for $head {
             const TY: WasmPrimitive = WasmPrimitive::$kind;
+            const SIGNED: bool = $signed;
             type Primitive = $head;
 
-            fn pushOnTop(&self, block: &BlockBuilder) {
+            fn push_on_top(&self, block: &BlockBuilder) {
                 block.emit(format!("{}.const {}", Self::TY, self), Some(self));
             }
         }
@@ -295,16 +302,37 @@ macro_rules! impl_as_wasm {
         impl_rhs_op!($head, Div, div);
         impl_rhs_op!($head, Rem, rem);
 
-        impl_as_wasm!($accessor, $kind, $($tail),*);
+        impl_as_wasm!($accessor, $kind, $signed, $($tail),*);
     };
 }
 
-impl_as_wasm!(i32, I32, u8, u16, u32, i8, i16, i32);
-impl_as_wasm!(i64, I64, u64, i64);
+impl_as_wasm!(i32, I32, false, u8, u16, u32);
+impl_as_wasm!(i32, I32, true, i8, i16, i32);
+impl_as_wasm!(i64, I64, false, u64);
+impl_as_wasm!(i64, I64, true, i64);
 
 // TODO: handle from_val() for floats
 // impl_as_wasm!(f32, F32, f32);
 // impl_as_wasm!(f64, F64, f64);
+
+impl<'a, T: WasmValue> WasmInteger<'a, T> {
+    pub fn binary_op<Rhs: AsWasm<Primitive = T>>(
+        &self,
+        rhs: Rhs,
+        signed: &str,
+        unsigned: &str,
+    ) -> WasmInteger<'a, T> {
+        self.push_on_top(self.block);
+        rhs.push_on_top(self.block);
+
+        let op = if T::SIGNED { signed } else { unsigned };
+
+        self.block
+            .emit(format!("{}.{op}", T::TY), Some(format!("{op}<{}>", T::TY)));
+
+        self.block.pop_value()
+    }
+}
 
 impl<'a, T: AsWasm> Compare<WasmInteger<'a, T::Primitive>, T> for WasmBackend {
     fn eq(&self, lhs: WasmInteger<'a, T::Primitive>, rhs: T) -> Bool<WasmBackend> {
@@ -324,13 +352,7 @@ impl<'a, T: AsWasm> Add<T> for WasmInteger<'a, T::Primitive> {
     type Output = Self;
 
     fn add(self, rhs: T) -> Self::Output {
-        self.pushOnTop(self.ctx);
-        rhs.pushOnTop(self.ctx);
-
-        self.ctx
-            .emit(format!("{}.add", T::TY), Some(format!("Add<{}>", T::TY)));
-
-        self.ctx.pop_value()
+        self.binary_op(rhs, "add", "add")
     }
 }
 
@@ -338,7 +360,7 @@ impl<'a, T: AsWasm> Mul<T> for WasmInteger<'a, T::Primitive> {
     type Output = Self;
 
     fn mul(self, rhs: T) -> Self::Output {
-        todo!()
+        self.binary_op(rhs, "mul", "mul")
     }
 }
 
@@ -346,7 +368,7 @@ impl<'a, T: AsWasm> Sub<T> for WasmInteger<'a, T::Primitive> {
     type Output = Self;
 
     fn sub(self, rhs: T) -> Self::Output {
-        todo!()
+        self.binary_op(rhs, "sub", "sub")
     }
 }
 
@@ -354,7 +376,7 @@ impl<'a, T: AsWasm> Div<T> for WasmInteger<'a, T::Primitive> {
     type Output = Self;
 
     fn div(self, rhs: T) -> Self::Output {
-        todo!()
+        self.binary_op(rhs, "div_s", "div_u")
     }
 }
 
@@ -362,7 +384,7 @@ impl<'a, T: AsWasm> Rem<T> for WasmInteger<'a, T::Primitive> {
     type Output = Self;
 
     fn rem(self, rhs: T) -> Self::Output {
-        todo!()
+        self.binary_op(rhs, "rem_s", "rem_u")
     }
 }
 
@@ -450,6 +472,7 @@ impl Jit for WasmBackend {
     }
 }
 
+// TODO: floating point arithmetic tests
 #[cfg(test)]
 mod tests {
     use super::*;
