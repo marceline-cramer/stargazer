@@ -67,6 +67,84 @@ impl JitScopes for WasmBackend {
     type OutputScope<'a> = Vec<Val>;
 }
 
+impl Conditional for WasmBackend {
+    type ConditionalScope<'a> = BranchBuilder<'a>;
+
+    fn conditional<'a, T>(&self, cond: Bool<'a, Self>, if_true: T, if_false: T) -> T
+    where
+        Self: Scope<BranchBuilder<'a>, T>,
+    {
+        let mut builder = BranchBuilder::new(cond);
+        self.leave(&mut builder, if_true);
+        builder.leave_true = false;
+        self.leave(&mut builder, if_false);
+        // TODO: enter in reverse order
+        builder.if_false.reverse();
+        builder.if_true.reverse();
+        self.enter(&mut builder)
+    }
+}
+
+pub struct BranchBuilder<'a> {
+    cond: Bool<'a, WasmBackend>,
+    leave_true: bool,
+    if_true: Vec<Box<dyn PushWasm + 'a>>,
+    if_false: Vec<Box<dyn PushWasm + 'a>>,
+}
+
+impl<'a> BranchBuilder<'a> {
+    pub fn new(cond: Bool<'a, WasmBackend>) -> Self {
+        Self {
+            cond,
+            leave_true: true,
+            if_true: Vec::new(),
+            if_false: Vec::new(),
+        }
+    }
+}
+
+impl<'a, T: WasmValue> Enter<BranchBuilder<'a>, WasmInteger<'a, T>> for WasmBackend {
+    fn enter(&self, scope: &mut BranchBuilder<'a>) -> WasmInteger<'a, T> {
+        let cond = match scope.cond {
+            MaybeConst::Const(true) => unimplemented!(),
+            MaybeConst::Const(false) => unimplemented!(),
+            MaybeConst::Variable(var) => var,
+        };
+
+        let block = &cond.block;
+        scope.if_true.pop().unwrap().push_on_top(block);
+        scope.if_false.pop().unwrap().push_on_top(block);
+        cond.push_on_top(block); // TODO: works?
+        block.emit("select", "conditional select");
+        block.pop_value()
+    }
+}
+
+impl<'a, T: PushWasm + 'a> Leave<BranchBuilder<'a>, T> for WasmBackend {
+    fn leave(&self, scope: &mut BranchBuilder<'a>, value: T) {
+        let ids = if scope.leave_true {
+            &mut scope.if_true
+        } else {
+            &mut scope.if_false
+        };
+
+        ids.push(Box::new(value));
+    }
+}
+
+impl FixedPoint for WasmBackend {
+    type FixedPointScope<'a> = BlockBuilder<'a>;
+
+    fn fixed_point<'a, T: 'a>(&self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
+    where
+        Self: Scope<BlockBuilder<'a>, T>,
+    {
+        let args = start;
+        let (cond, result) = body(args);
+        todo!()
+    }
+}
+
 impl<T: WasmValue> RustValue<T> for WasmBackend {
     type Value<'a> = MaybeConst<T, WasmInteger<'a, T>>;
 }
@@ -97,11 +175,7 @@ impl<'a> Not for WasmInteger<'a, bool> {
     }
 }
 
-impl<'a, T: WasmValue> AsWasm for WasmInteger<'a, T> {
-    const TY: WasmPrimitive = T::TY;
-    const SIGNED: bool = T::SIGNED;
-    type Primitive = T;
-
+impl<'a, T: WasmValue> PushWasm for WasmInteger<'a, T> {
     fn push_on_top(&self, block: &BlockBuilder) {
         assert!(core::ptr::eq(block, self.block));
 
@@ -110,6 +184,12 @@ impl<'a, T: WasmValue> AsWasm for WasmInteger<'a, T> {
             format!("push WasmInteger<{}>", T::TY),
         );
     }
+}
+
+impl<'a, T: WasmValue> AsWasm for WasmInteger<'a, T> {
+    const TY: WasmPrimitive = T::TY;
+    const SIGNED: bool = T::SIGNED;
+    type Primitive = T;
 }
 
 macro_rules! impl_rhs_op {
@@ -197,28 +277,6 @@ impl<'a, T: AsWasm> Rem<T> for WasmInteger<'a, T::Primitive> {
     }
 }
 
-impl Conditional for WasmBackend {
-    type ConditionalScope<'a> = BlockBuilder<'a>;
-
-    fn conditional<T>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T
-    where
-        Self: for<'a> Scope<BlockBuilder<'a>, T>,
-    {
-        todo!()
-    }
-}
-
-impl FixedPoint for WasmBackend {
-    type FixedPointScope<'a> = BlockBuilder<'a>;
-
-    fn fixed_point<'a, T>(&self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
-    where
-        Self: Scope<BlockBuilder<'a>, T>,
-    {
-        todo!()
-    }
-}
-
 pub struct FuncBuilder<'a> {
     inputs: Vec<WasmPrimitive>,
     outputs: Vec<WasmPrimitive>,
@@ -271,8 +329,8 @@ impl<'a, T: WasmValue> Enter<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBacken
     }
 }
 
-impl<'a, T: WasmValue> Leave<FuncBuilder<'a>, WasmInteger<'a, T>> for WasmBackend {
-    fn leave(&self, func: &mut FuncBuilder<'a>, value: WasmInteger<'a, T>) {
+impl<'a, T: AsWasm> Leave<FuncBuilder<'a>, T> for WasmBackend {
+    fn leave(&self, func: &mut FuncBuilder<'a>, value: T) {
         func.outputs.push(T::TY);
         value.push_on_top(func.block);
     }
@@ -304,14 +362,14 @@ impl<'a> BlockBuilder<'a> {
     }
 }
 
-impl<'a, 'b, T: WasmValue> Enter<BlockBuilder<'b>, WasmInteger<'a, T>> for WasmBackend {
-    fn enter(&self, block: &mut BlockBuilder<'b>) -> WasmInteger<'a, T> {
+impl<'a, T: AsWasm> Enter<BlockBuilder<'a>, T> for WasmBackend {
+    fn enter(&self, block: &mut BlockBuilder<'a>) -> T {
         todo!("populate enter() for BlockBuilder")
     }
 }
 
-impl<'a, 'b, T: WasmValue> Leave<BlockBuilder<'b>, WasmInteger<'a, T>> for WasmBackend {
-    fn leave(&self, block: &mut BlockBuilder<'b>, value: WasmInteger<'a, T>) {
+impl<'a, T: AsWasm> Leave<BlockBuilder<'a>, T> for WasmBackend {
+    fn leave(&self, block: &mut BlockBuilder<'a>, value: T) {
         todo!("populate leave() for BlockBuilder")
     }
 }
@@ -370,15 +428,18 @@ impl<T: WasmValue> Leave<Vec<Val>, T> for WasmBackend {
     }
 }
 
-pub trait AsWasm: Copy {
+pub trait PushWasm {
+    fn push_on_top(&self, block: &BlockBuilder);
+}
+
+pub trait AsWasm: PushWasm {
     const TY: WasmPrimitive;
     // TODO: move to a dedicated numeric trait?
     const SIGNED: bool;
     type Primitive: WasmValue;
-    fn push_on_top(&self, block: &BlockBuilder);
 }
 
-pub trait WasmValue: AsWasm + 'static {
+pub trait WasmValue: AsWasm + Copy + 'static {
     fn to_val(&self) -> Val;
     fn from_val(val: Val) -> Self;
 }
@@ -386,14 +447,16 @@ pub trait WasmValue: AsWasm + 'static {
 macro_rules! impl_as_wasm {
     ($accessor:ident, $kind:ident, $signed:expr,) => {};
     ($accessor:ident, $kind:ident, $signed:expr, $head:ty $(, $tail:ty)*) => {
+        impl PushWasm for $head {
+            fn push_on_top(&self, block: &BlockBuilder) {
+                block.emit(format!("{}.const {}", Self::TY, self), self);
+            }
+        }
+
         impl AsWasm for $head {
             const TY: WasmPrimitive = WasmPrimitive::$kind;
             const SIGNED: bool = $signed;
             type Primitive = $head;
-
-            fn push_on_top(&self, block: &BlockBuilder) {
-                block.emit(format!("{}.const {}", Self::TY, self), self);
-            }
         }
 
         impl WasmValue for $head {
@@ -423,15 +486,17 @@ impl_as_wasm!(i64, I64, true, i64);
 // impl_as_wasm!(f32, F32, f32);
 // impl_as_wasm!(f64, F64, f64);
 
-impl AsWasm for bool {
-    const TY: WasmPrimitive = WasmPrimitive::I32;
-    const SIGNED: bool = false;
-    type Primitive = bool;
-
+impl PushWasm for bool {
     fn push_on_top(&self, block: &BlockBuilder) {
         let val = if *self { 1 } else { 0 };
         block.emit(format!("i32.const {val}"), self);
     }
+}
+
+impl AsWasm for bool {
+    const TY: WasmPrimitive = WasmPrimitive::I32;
+    const SIGNED: bool = false;
+    type Primitive = bool;
 }
 
 impl WasmValue for bool {

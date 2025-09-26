@@ -34,9 +34,9 @@ pub trait Conditional: RustValue<bool> {
     type ConditionalScope<'a>;
 
     /// Picks a value to return based on a Boolean value.
-    fn conditional<T>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T
+    fn conditional<'a, T: 'a>(&self, cond: Bool<'a, Self>, if_true: T, if_false: T) -> T
     where
-        Self: for<'a> Scope<Self::ConditionalScope<'a>, T>;
+        Self: Scope<Self::ConditionalScope<'a>, T>;
 }
 
 /// Fixed-point loop (do-while).
@@ -45,9 +45,9 @@ pub trait FixedPoint: RustValue<bool> {
     type FixedPointScope<'a>;
 
     /// Iterates on a starting state until a condition is met and returns the final state.
-    fn fixed_point<'a, T>(&'a self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
+    fn fixed_point<'a, T: 'a>(&self, start: T, body: impl Fn(T) -> (Bool<'a, Self>, T)) -> T
     where
-        Self: for<'b> Scope<Self::FixedPointScope<'b>, T>;
+        Self: Scope<Self::FixedPointScope<'a>, T>;
 }
 
 /// A backend trait associating a Rust type with some backend value type.
@@ -131,30 +131,30 @@ impl<B, T: NumOps> RustNumOps<T> for B where
 }
 
 /// Blanket trait for types that support basic control flow operations.
-pub trait ControlFlow<T>:
+pub trait ControlFlow<'a, T>:
     Conditional
     + FixedPoint
-    + for<'a> Scope<Self::ConditionalScope<'a>, T>
-    + for<'a> Scope<Self::FixedPointScope<'a>, T>
+    + Scope<Self::ConditionalScope<'a>, T>
+    + Scope<Self::FixedPointScope<'a>, T>
 {
 }
 
-impl<B, T> ControlFlow<T> for B where
+impl<'a, B, T> ControlFlow<'a, T> for B where
     B: Conditional
         + FixedPoint
-        + for<'a> Scope<Self::ConditionalScope<'a>, T>
-        + for<'a> Scope<Self::FixedPointScope<'a>, T>
+        + Scope<Self::ConditionalScope<'a>, T>
+        + Scope<Self::FixedPointScope<'a>, T>
 {
 }
 
 /// Blanket trait for Rust values that support basic control flow operations.
 pub trait RustControlFlow<T>:
-    RustValue<T> + for<'a> ControlFlow<<Self as RustValue<T>>::Value<'a>>
+    RustValue<T> + for<'a> ControlFlow<'a, <Self as RustValue<T>>::Value<'a>>
 {
 }
 
 impl<B, T> RustControlFlow<T> for B where
-    B: RustValue<T> + for<'a> ControlFlow<<Self as RustValue<T>>::Value<'a>>
+    B: RustValue<T> + for<'a> ControlFlow<'a, <Self as RustValue<T>>::Value<'a>>
 {
 }
 
@@ -398,11 +398,14 @@ impl<Ctx, B: Enter<Ctx, V>, C, V> Enter<Ctx, MaybeConst<C, V>> for B {
     }
 }
 
-impl<Ctx, B: Leave<Ctx, V>, C, V> Leave<Ctx, MaybeConst<C, V>> for B {
+impl<Ctx, B, C, V> Leave<Ctx, MaybeConst<C, V>> for B
+where
+    B: Leave<Ctx, C> + Leave<Ctx, V>,
+{
     fn leave(&self, ctx: &mut Ctx, value: MaybeConst<C, V>) {
         use MaybeConst::*;
         match value {
-            Const(_) => {}
+            Const(c) => self.leave(ctx, c),
             Variable(v) => self.leave(ctx, v),
         }
     }

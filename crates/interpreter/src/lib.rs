@@ -24,7 +24,7 @@ impl<T: Primitive> Leave<InterpreterScope, T> for Interpreter {
 impl Conditional for Interpreter {
     type ConditionalScope<'a> = InterpreterScope;
 
-    fn conditional<T>(&self, cond: Bool<Self>, if_true: T, if_false: T) -> T {
+    fn conditional<'a, T: 'a>(&self, cond: Bool<'a, Self>, if_true: T, if_false: T) -> T {
         if cond { if_true } else { if_false }
     }
 }

@@ -189,6 +189,20 @@ pub fn signed_arith_tests<
 }
 
 pub fn basic_tests<B: Jit + Basic + 'static>(backend: &B) {
+    test_assert_eq::<B, (u64, u64), u64>(
+        "minimum",
+        backend,
+        |backend, (a, b)| backend.conditional(backend.lt(a, b), a, b),
+        &[
+            ((0, 0), 0),
+            ((0, 1), 0),
+            ((1, 0), 0),
+            ((1, 1), 1),
+            ((2, 1), 1),
+            ((1, 2), 1),
+        ],
+    );
+
     test_assert_eq::<B, u64, u64>(
         "fibonacci sequence",
         backend,
